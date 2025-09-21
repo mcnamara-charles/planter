@@ -47,6 +47,10 @@ export default function PlantDetailScreen() {
   const [potDraft, setPotDraft] = useState<PotDetailsValues>({ potType: '', drainageSystem: '', potHeightIn: '', potDiameterIn: '' });
   const [potModalMode, setPotModalMode] = useState<'add' | 'repot'>('add');
   const [potDraftNote, setPotDraftNote] = useState('');
+  const [soilModalOpen, setSoilModalOpen] = useState(false);
+  const [soilRowsDraft, setSoilRowsDraft] = useState<Array<{ id: string; name: string; parts: string }>>([]);
+  const [locationModalOpen, setLocationModalOpen] = useState(false);
+  const [locationDraft, setLocationDraft] = useState('');
   const { user } = useAuth();
 
   const fetchDetails = useCallback(async (isPull: boolean = false) => {
@@ -279,6 +283,9 @@ export default function PlantDetailScreen() {
                 soilMix={soilMix}
                 onAddPotDetails={() => { setPotModalMode('add'); setPotDraft({ potType: potType || '', drainageSystem: drainageSystem || '', potHeightIn: potHeightIn ? String(potHeightIn) : '', potDiameterIn: potDiameterIn ? String(potDiameterIn) : '' }); setPotDraftNote(''); setPotModalOpen(true); }}
                 onRepot={() => { setPotModalMode('repot'); setPotDraft({ potType: potType || '', drainageSystem: drainageSystem || '', potHeightIn: potHeightIn ? String(potHeightIn) : '', potDiameterIn: potDiameterIn ? String(potDiameterIn) : '' }); setPotDraftNote(''); setPotModalOpen(true); }}
+                onMove={() => { setLocationDraft(plantLocation || ''); setLocationModalOpen(true); }}
+                onSetSoilFirst={() => { setSoilRowsDraft([]); setSoilModalOpen(true); }}
+                onChangeSoil={() => { const rows = Object.entries(soilMix || {}).map(([name, parts]) => ({ id: Math.random().toString(36).slice(2), name, parts: String(parts) })); setSoilRowsDraft(rows); setSoilModalOpen(true); }}
               />
             </Section>
 						<Section title="Propagation" />
@@ -287,6 +294,135 @@ export default function PlantDetailScreen() {
         </>
       )}
       </ParallaxScrollView>
+      {/* Location modal */}
+      {locationModalOpen && (
+        <View style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.35)', alignItems: 'center', justifyContent: 'center' }}>
+          <View style={{ width: '90%', maxWidth: 520, borderRadius: 14, borderWidth: StyleSheet.hairlineWidth, borderColor: theme.colors.border, backgroundColor: theme.colors.card, padding: 16 }}>
+            <ThemedText type="title">Move plant</ThemedText>
+            <View style={{ height: 8 }} />
+            <TextInput
+              style={{ borderWidth: StyleSheet.hairlineWidth, borderColor: theme.colors.border, backgroundColor: theme.colors.input, color: theme.colors.text, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 12 }}
+              value={locationDraft}
+              onChangeText={setLocationDraft}
+              placeholder="e.g., Living room window"
+              placeholderTextColor={theme.colors.mutedText}
+            />
+            <View style={{ height: 14 }} />
+            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 12 }}>
+              <TouchableOpacity onPress={() => setLocationModalOpen(false)} style={[styles.envBtn, { borderColor: theme.colors.border }]}>
+                <ThemedText style={{ fontWeight: '700', color: theme.colors.text }}>Cancel</ThemedText>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={async () => {
+                try {
+                  const prev = plantLocation || '';
+                  const next = locationDraft.trim();
+                  if (next === prev) { setLocationModalOpen(false); return; }
+                  const { error: updErr } = await supabase.from('user_plants').update({ location: next || null }).eq('id', id);
+                  if (updErr) throw updErr;
+                  setPlantLocation(next);
+                  setLocationModalOpen(false);
+                  // Insert moved event only if changing from a non-empty previous value
+                  if (user?.id && prev) {
+                    await supabase.from('user_plant_timeline_events').insert({
+                      owner_id: user.id,
+                      user_plant_id: id,
+                      event_type: 'move',
+                      event_data: { from: prev || null, to: next || null },
+                      note: null,
+                    });
+                  }
+                } catch (e) {}
+              }} style={[styles.envBtn, { borderColor: theme.colors.border }]}>
+                <ThemedText style={{ fontWeight: '700', color: theme.colors.primary }}>Save</ThemedText>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      )}
+
+      {/* Soil modal */}
+      {soilModalOpen && (
+        <View style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.35)', alignItems: 'center', justifyContent: 'center' }}>
+          <View style={{ width: '90%', maxWidth: 520, borderRadius: 14, borderWidth: StyleSheet.hairlineWidth, borderColor: theme.colors.border, backgroundColor: theme.colors.card, padding: 16 }}>
+            <ThemedText type="title">Soil mix</ThemedText>
+            <View style={{ height: 8 }} />
+            {/* Reuse simple rows UI inline to avoid duplication; mirrors AddPlantScreen */}
+            {soilRowsDraft.map((row, idx) => (
+              <View key={row.id} style={{ flexDirection: 'row', gap: 8, alignItems: 'center', marginBottom: 8 }}>
+                <TextInput
+                  style={{ flex: 1, borderWidth: StyleSheet.hairlineWidth, borderColor: theme.colors.border, backgroundColor: theme.colors.input, color: theme.colors.text, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 12 }}
+                  value={row.name}
+                  onChangeText={(t) => setSoilRowsDraft((r) => r.map((x, i) => i === idx ? { ...x, name: t } : x))}
+                  placeholder="Component"
+                  placeholderTextColor={theme.colors.mutedText}
+                />
+                <TextInput
+                  keyboardType="numeric"
+                  style={{ width: 88, borderWidth: StyleSheet.hairlineWidth, borderColor: theme.colors.border, backgroundColor: theme.colors.input, color: theme.colors.text, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 12, textAlign: 'center' }}
+                  value={row.parts}
+                  onChangeText={(t) => setSoilRowsDraft((r) => r.map((x, i) => i === idx ? { ...x, parts: t } : x))}
+                  placeholder="parts"
+                  placeholderTextColor={theme.colors.mutedText}
+                />
+                <TouchableOpacity onPress={() => setSoilRowsDraft((r) => r.filter((_, i) => i !== idx))}>
+                  <IconSymbol name="xmark.circle.fill" size={20} color={theme.colors.mutedText} />
+                </TouchableOpacity>
+              </View>
+            ))}
+            <View style={{ flexDirection: 'row', gap: 12, marginTop: 4 }}>
+              <TouchableOpacity
+                onPress={() => setSoilRowsDraft((r) => [...r, { id: Math.random().toString(36).slice(2), name: '', parts: '' }])}
+                accessibilityLabel="Add component"
+                style={{ paddingVertical: 8, paddingHorizontal: 4 }}
+              >
+                <ThemedText style={{ fontWeight: '700', color: theme.colors.primary }}>+ Add</ThemedText>
+              </TouchableOpacity>
+              {soilRowsDraft.length > 0 && (
+                <TouchableOpacity onPress={() => setSoilRowsDraft([])} style={[styles.envBtn, { borderColor: theme.colors.border }]}>
+                  <ThemedText style={{ fontWeight: '700' }}>Clear</ThemedText>
+                </TouchableOpacity>
+              )}
+            </View>
+            <View style={{ height: 14 }} />
+            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 12 }}>
+              <TouchableOpacity onPress={() => setSoilModalOpen(false)} style={[styles.envBtn, { borderColor: theme.colors.border }]}>
+                <ThemedText style={{ fontWeight: '700', color: theme.colors.text }}>Cancel</ThemedText>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={async () => {
+                // Build mix object
+                const obj: Record<string, number> = {};
+                for (const r of soilRowsDraft) {
+                  const name = r.name.trim();
+                  const partsNum = Number(r.parts);
+                  if (!name) continue;
+                  if (!isFinite(partsNum) || partsNum <= 0) continue;
+                  obj[name] = partsNum;
+                }
+                const nextMix = Object.keys(obj).length > 0 ? obj : null;
+                const prevMix = soilMix;
+                try {
+                  const { error: updErr } = await supabase.from('user_plants').update({ soil_mix: nextMix }).eq('id', id);
+                  if (updErr) throw updErr;
+                  setSoilMix(nextMix);
+                  setSoilModalOpen(false);
+                  // Event: only if changing from existing mix
+                  if (user?.id && prevMix && JSON.stringify(prevMix) !== JSON.stringify(nextMix)) {
+                    await supabase.from('user_plant_timeline_events').insert({
+                      owner_id: user.id,
+                      user_plant_id: id,
+                      event_type: 'soil_changed',
+                      event_data: { previous: prevMix, next: nextMix },
+                      note: null,
+                    });
+                  }
+                } catch (e) {}
+              }} style={[styles.envBtn, { borderColor: theme.colors.border }]}>
+                <ThemedText style={{ fontWeight: '700', color: theme.colors.primary }}>Save</ThemedText>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      )}
       <PotDetailsModal
         open={potModalOpen}
         onClose={() => setPotModalOpen(false)}
@@ -401,7 +537,7 @@ function Section({ title, children }: { title: string; children?: React.ReactNod
   );
 }
 
-function EnvironmentSection({ plantName, plantLocation, potType, potHeightIn, potDiameterIn, drainageSystem, soilMix, onAddPotDetails, onRepot }: { plantName: string; plantLocation?: string; potType?: string | null; potHeightIn?: number | null; potDiameterIn?: number | null; drainageSystem?: string | null; soilMix?: Record<string, number> | null; onAddPotDetails?: () => void; onRepot?: () => void }) {
+function EnvironmentSection({ plantName, plantLocation, potType, potHeightIn, potDiameterIn, drainageSystem, soilMix, onAddPotDetails, onRepot, onMove, onSetSoilFirst, onChangeSoil }: { plantName: string; plantLocation?: string; potType?: string | null; potHeightIn?: number | null; potDiameterIn?: number | null; drainageSystem?: string | null; soilMix?: Record<string, number> | null; onAddPotDetails?: () => void; onRepot?: () => void; onMove?: () => void; onSetSoilFirst?: () => void; onChangeSoil?: () => void }) {
   const { theme } = useTheme();
   return (
     <View style={{ gap: 18 }}>
@@ -409,7 +545,7 @@ function EnvironmentSection({ plantName, plantLocation, potType, potHeightIn, po
         <ThemedText style={{ fontWeight: '800' }}>Location</ThemedText>
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
           <ThemedText style={{ opacity: 0.85 }}>{plantLocation || 'Not set'}</ThemedText>
-          <TouchableOpacity style={[styles.envBtn, { borderColor: theme.colors.border }]}>
+          <TouchableOpacity style={[styles.envBtn, { borderColor: theme.colors.border }]} onPress={onMove}> 
             <ThemedText style={{ fontWeight: '700', color: theme.colors.primary }}>Move</ThemedText>
           </TouchableOpacity>
         </View>
@@ -517,14 +653,14 @@ function EnvironmentSection({ plantName, plantLocation, potType, potHeightIn, po
               mix={Object.entries(soilMix).map(([label, parts]) => ({ label, parts: Number(parts), icon: 'leaf' }))}
             />
           ) : (
-            <TouchableOpacity style={[styles.primaryButton, { backgroundColor: theme.colors.primary, marginTop: 12 }]}>
+            <TouchableOpacity style={[styles.primaryButton, { backgroundColor: theme.colors.primary, marginTop: 12 }]} onPress={onSetSoilFirst}> 
               <ThemedText style={styles.primaryLabel}>Set Soil Mix</ThemedText>
             </TouchableOpacity>
           )}
         </View>
         {!!soilMix && Object.keys(soilMix).length > 0 ? (
           <View style={{ marginTop: 8, alignItems: 'flex-start' }}>
-            <TouchableOpacity style={[styles.envBtn, { borderColor: theme.colors.border }]}> 
+            <TouchableOpacity style={[styles.envBtn, { borderColor: theme.colors.border }]} onPress={onChangeSoil}> 
               <ThemedText style={{ fontWeight: '700', color: theme.colors.primary }}>Change soil mix</ThemedText>
             </TouchableOpacity>
           </View>

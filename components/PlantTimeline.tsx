@@ -107,6 +107,10 @@ const EVENT_MAP: Record<string, EventConfig> = {
   repot: {
     icon: 'cycle',
     title: () => 'Repotted',
+    cardStyle: () => ({
+      backgroundColor: 'rgba(16,185,129,0.12)', // subtle green
+      borderColor: 'rgba(16,185,129,0.35)',
+    }),
     chips: (e) => {
       const d = e.event_data || {};
       const chips: string[] = [];
@@ -144,6 +148,10 @@ const EVENT_MAP: Record<string, EventConfig> = {
   move: {
     icon: 'location',
     title: () => 'Moved',
+    cardStyle: () => ({
+      backgroundColor: 'rgba(16,185,129,0.12)',
+      borderColor: 'rgba(16,185,129,0.35)',
+    }),
     chips: (e) => {
       const d = e.event_data || {};
       const chips: string[] = [];
@@ -155,12 +163,32 @@ const EVENT_MAP: Record<string, EventConfig> = {
   prune: {
     icon: 'scissors',
     title: () => 'Pruned',
+    cardStyle: () => ({
+      backgroundColor: 'rgba(16,185,129,0.12)',
+      borderColor: 'rgba(16,185,129,0.35)',
+    }),
     chips: (e) => {
       const d = e.event_data || {};
       const chips: string[] = [];
       if (d.parts) chips.push(String(d.parts));
       if (d.count) chips.push(`${d.count} cuts`);
       return chips;
+    },
+  },
+  soil_changed: {
+    icon: 'leaf',
+    title: () => 'Soil changed',
+    cardStyle: () => ({
+      backgroundColor: 'rgba(16,185,129,0.12)',
+      borderColor: 'rgba(16,185,129,0.35)',
+    }),
+    chips: (e) => {
+      const d = e.event_data || {};
+      const prev = d.previous ? Object.keys(d.previous).length : 0;
+      const next = d.next ? Object.keys(d.next).length : 0;
+      const arr: string[] = [];
+      if (prev || next) arr.push(`${prev} → ${next} parts`);
+      return arr;
     },
   },
 };
@@ -188,7 +216,7 @@ function EventIcon({ type, size = 18 }: { type: string; size?: number }) {
 function Chip({ label }: { label: string }) {
   const { theme } = useTheme();
   return (
-    <View style={[styles.chip, { borderColor: theme.colors.border, backgroundColor: theme.colors.card }]}>
+    <View style={[styles.chip, { backgroundColor: 'rgba(0,0,0,0.2)' }]}> 
       <ThemedText style={styles.chipLabel}>{label}</ThemedText>
     </View>
   );
