@@ -269,7 +269,25 @@ export default function PlantDetailScreen() {
 					</View>
 					{/* Collapsible sections */}
 					<View style={styles.sectionsWrap}>
-						<Section title="Care & Schedule" open={openSection === 'Care & Schedule'} onToggle={() => setOpenSection(openSection === 'Care & Schedule' ? null : 'Care & Schedule')} />
+						<Section title="Care & Schedule" open={openSection === 'Care & Schedule'} onToggle={() => setOpenSection(openSection === 'Care & Schedule' ? null : 'Care & Schedule')}>
+							<View style={{ gap: 12 }}>
+								<ThemedText style={{ fontWeight: '800' }}>Care Actions</ThemedText>
+								<View style={{ flexDirection: 'row', flexWrap: 'wrap', columnGap: 8, rowGap: 8 }}>
+									<TouchableOpacity style={[styles.envBtn, { borderColor: theme.colors.border }]}> 
+										<ThemedText style={{ fontWeight: '700', color: theme.colors.primary }}>Water</ThemedText>
+									</TouchableOpacity>
+									<TouchableOpacity style={[styles.envBtn, { borderColor: theme.colors.border }]}> 
+										<ThemedText style={{ fontWeight: '700', color: theme.colors.primary }}>Fertilize</ThemedText>
+									</TouchableOpacity>
+									<TouchableOpacity style={[styles.envBtn, { borderColor: theme.colors.border }]}> 
+										<ThemedText style={{ fontWeight: '700', color: theme.colors.primary }}>Prune</ThemedText>
+									</TouchableOpacity>
+									<TouchableOpacity style={[styles.envBtn, { borderColor: theme.colors.border }]}> 
+										<ThemedText style={{ fontWeight: '700', color: theme.colors.primary }}>Observe</ThemedText>
+									</TouchableOpacity>
+								</View>
+							</View>
+						</Section>
 						<Section title="Timeline" open={openSection === 'Timeline'} onToggle={() => setOpenSection(openSection === 'Timeline' ? null : 'Timeline')}>
 							<PlantTimeline key={timelineKey} userPlantId={id} withinScrollView/>
 						</Section>
