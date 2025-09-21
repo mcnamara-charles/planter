@@ -51,6 +51,7 @@ export default function PlantDetailScreen() {
   const [soilRowsDraft, setSoilRowsDraft] = useState<Array<{ id: string; name: string; parts: string }>>([]);
   const [locationModalOpen, setLocationModalOpen] = useState(false);
   const [locationDraft, setLocationDraft] = useState('');
+  const [openSection, setOpenSection] = useState<string | null>(null);
   const { user } = useAuth();
 
   const fetchDetails = useCallback(async (isPull: boolean = false) => {
@@ -268,11 +269,11 @@ export default function PlantDetailScreen() {
 					</View>
 					{/* Collapsible sections */}
 					<View style={styles.sectionsWrap}>
-						<Section title="Care & Schedule" />
-            <Section title="Timeline">
-              <PlantTimeline key={timelineKey} userPlantId={id} withinScrollView/>
-            </Section>
-            <Section title="Environment">
+						<Section title="Care & Schedule" open={openSection === 'Care & Schedule'} onToggle={() => setOpenSection(openSection === 'Care & Schedule' ? null : 'Care & Schedule')} />
+						<Section title="Timeline" open={openSection === 'Timeline'} onToggle={() => setOpenSection(openSection === 'Timeline' ? null : 'Timeline')}>
+							<PlantTimeline key={timelineKey} userPlantId={id} withinScrollView/>
+						</Section>
+						<Section title="Environment" open={openSection === 'Environment'} onToggle={() => setOpenSection(openSection === 'Environment' ? null : 'Environment')}>
               <EnvironmentSection
                 plantName={displayName || 'This plant'}
                 plantLocation={plantLocation}
@@ -287,9 +288,9 @@ export default function PlantDetailScreen() {
                 onSetSoilFirst={() => { setSoilRowsDraft([]); setSoilModalOpen(true); }}
                 onChangeSoil={() => { const rows = Object.entries(soilMix || {}).map(([name, parts]) => ({ id: Math.random().toString(36).slice(2), name, parts: String(parts) })); setSoilRowsDraft(rows); setSoilModalOpen(true); }}
               />
-            </Section>
-						<Section title="Propagation" />
-						<Section title="Photos" />
+						</Section>
+						<Section title="Propagation" open={openSection === 'Propagation'} onToggle={() => setOpenSection(openSection === 'Propagation' ? null : 'Propagation')} />
+						<Section title="Photos" open={openSection === 'Photos'} onToggle={() => setOpenSection(openSection === 'Photos' ? null : 'Photos')} />
 					</View>
         </>
       )}
@@ -514,14 +515,13 @@ function SeparatorPlus() {
 
 /* old EnvironmentSection removed */
 
-function Section({ title, children }: { title: string; children?: React.ReactNode }) {
+function Section({ title, children, open, onToggle }: { title: string; children?: React.ReactNode; open: boolean; onToggle: () => void }) {
   const { theme } = useTheme();
-  const [open, setOpen] = useState<boolean>(false);
   return (
     <View style={[styles.sectionContainer, { borderColor: theme.colors.border, backgroundColor: theme.colors.card }]}>
       <TouchableOpacity
         style={styles.sectionHeader}
-        onPress={() => setOpen((o) => !o)}
+        onPress={onToggle}
         accessibilityRole="button"
         accessibilityLabel={`Toggle section ${title}`}
       >
