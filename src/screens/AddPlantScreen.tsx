@@ -448,7 +448,7 @@ export default function AddPlantScreen() {
             </View>
 
             <View style={styles.fieldGroup}>
-              <ThemedText style={styles.label}>Acquired at (date)</ThemedText>
+              <ThemedText style={styles.label}>Acquired on</ThemedText>
               <TextInput
                 style={[styles.input, { backgroundColor: theme.colors.input, borderColor: theme.colors.border, color: theme.colors.text }]}
                 value={acquiredAt}

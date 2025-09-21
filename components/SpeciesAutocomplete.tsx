@@ -73,6 +73,7 @@ export function SpeciesAutocomplete(props: Props) {
 
   const { theme } = useTheme();
 
+  const inputRef = useRef<TextInput | null>(null);
   const [input, setInput] = useState<string>(() =>
     selectedItem ? '' : (displayText ?? '')
   );
@@ -81,6 +82,7 @@ export function SpeciesAutocomplete(props: Props) {
   const [searching, setSearching] = useState(false);
   const [open, setOpen] = useState(false);
   const pickedRef = useRef<boolean>(!!selectedItem);
+  const [showInput, setShowInput] = useState<boolean>(() => !selectedItem);
 
   const searchStateRef = useRef<{
     token: number;
@@ -102,11 +104,13 @@ export function SpeciesAutocomplete(props: Props) {
       if (clearInputOnPick) setInput('');        // <— keep input empty after pick
       setOpen(false);
       setResults([]);
+      setShowInput(false);
     } else {
       setPicked(null);
       setPickedDetails(null);
       // when nothing is selected, reflect displayText (if provided)
       setInput(displayText ?? '');
+      setShowInput(true);
     }
   }, [selectedItem?.id, displayText, clearInputOnPick]);
 
@@ -261,6 +265,8 @@ export function SpeciesAutocomplete(props: Props) {
     // leave input/query/results as-is so the user can keep searching
     // optionally notify parent that selection is gone but keep their typed text
     onCustomChange?.(input);
+    setShowInput(true);
+    requestAnimationFrame(() => inputRef.current?.focus());
   }
 
   function handlePick(item: SpeciesResult) {
@@ -272,6 +278,7 @@ export function SpeciesAutocomplete(props: Props) {
     setPicked(item);
     pickedRef.current = true;
     Keyboard.dismiss();
+    setShowInput(false);
     onPick(item);
   }
 
@@ -358,33 +365,39 @@ export function SpeciesAutocomplete(props: Props) {
         )}
 
 
-      {/* Input */}
-      <View style={styles.inputWrap}>
-        <TextInput
-          value={input}
-          onChangeText={handleChange}
-          placeholder={picked ? 'Search to change species' : placeholder}
-          placeholderTextColor={theme.colors.mutedText}
-          style={[
-            styles.input,
-            {
-              backgroundColor: theme.colors.input,
-              borderColor: theme.colors.border,
-              color: theme.colors.text,
-            },
-          ]}
-          autoCapitalize="none"
-          autoCorrect={false}
-          onFocus={() => {
-            if (results.length > 0) setOpen(true);
-          }}
-        />
+      {/* Input (hidden when a species is picked unless user taps Change) */}
+      {showInput && (
+        <View style={styles.inputWrap}>
+          <TextInput
+            ref={inputRef}
+            value={input}
+            onChangeText={handleChange}
+            placeholder={picked ? 'Search to change species' : placeholder}
+            placeholderTextColor={theme.colors.mutedText}
+            style={[
+              styles.input,
+              {
+                backgroundColor: theme.colors.input,
+                borderColor: theme.colors.border,
+                color: theme.colors.text,
+              },
+            ]}
+            autoCapitalize="none"
+            autoCorrect={false}
+            onFocus={() => {
+              if (results.length > 0) setOpen(true);
+            }}
+            onBlur={() => {
+              if (picked) setShowInput(false);
+            }}
+          />
 
-        {searching && <ActivityIndicator style={styles.spinner} size="small" />}
-      </View>
+          {searching && <ActivityIndicator style={styles.spinner} size="small" />}
+        </View>
+      )}
 
       {/* Results */}
-      {open && (
+      {open && showInput && (
         <View
           style={[
             styles.dropdown,
@@ -411,6 +424,21 @@ export function SpeciesAutocomplete(props: Props) {
               </TouchableOpacity>
             ))}
           </ScrollView>
+        </View>
+      )}
+
+      {/* Change button when a species is selected and input is hidden */}
+      {picked && !showInput && (
+        <View style={{ marginTop: 6, alignItems: 'flex-start' }}>
+          <TouchableOpacity
+            accessibilityRole="button"
+            onPress={() => {
+              setShowInput(true);
+              setTimeout(() => inputRef.current?.focus(), 0);
+            }}
+          >
+            <ThemedText style={{ fontWeight: '700', color: theme.colors.primary }}>Change</ThemedText>
+          </TouchableOpacity>
         </View>
       )}
     </View>
