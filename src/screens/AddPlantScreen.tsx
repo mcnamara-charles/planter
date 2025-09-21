@@ -107,6 +107,20 @@ export default function AddPlantScreen() {
             setPotHeightIn(up.pot_height_in ? String(up.pot_height_in) : '');
             setPotDiameterIn(up.pot_diameter_in ? String(up.pot_diameter_in) : '');
             setDrainageSystem(up.drainage_system ?? '');
+            // Prefill soil mix rows from JSON object
+            const mixObj = (up as any).soil_mix as Record<string, number> | null;
+            if (mixObj && typeof mixObj === 'object') {
+              const entries = Object.entries(mixObj);
+              setSoilRows(
+                entries.map(([name, parts]) => ({
+                  id: Math.random().toString(36).slice(2),
+                  name,
+                  parts: String(parts ?? ''),
+                }))
+              );
+            } else {
+              setSoilRows([]);
+            }
             if (up.acquired_at) {
               const iso = String(up.acquired_at);
               const m = iso.match(/^\d{4}-\d{2}-\d{2}/);
