@@ -1,0 +1,208 @@
+import React from 'react';
+import { NavigationContainer, DarkTheme, DefaultTheme } from '@react-navigation/native';
+import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { View, Pressable, StyleSheet, Alert, Platform } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
+
+import { useTheme } from '@/context/themeContext';
+import { useAuth } from '@/context/AuthContext';
+import { IconSymbol } from '@/components/ui/icon-symbol';
+import HomeScreen from '@/src/screens/HomeScreen';
+import PlantsScreen from '@/src/screens/PlantsScreen';
+import AccountScreen from '@/src/screens/AccountScreen';
+import DiscoverScreen from '@/src/screens/DiscoverScreen';
+import SignInScreen from '@/src/screens/SignInScreen';
+import SignUpScreen from '@/src/screens/SignUpScreen';
+import VerifyEmailScreen from '@/src/screens/VerifyEmailScreen';
+import AddPlantScreen from '@/src/screens/AddPlantScreen';
+import PlantDetailScreen from '../../src/screens/PlantDetailScreen';
+
+const Stack = createNativeStackNavigator();
+const Tab = createBottomTabNavigator();
+
+function CenterIdentifyButton({ onPress }: { onPress: () => void }) {
+  // Standalone so it renders even when Identify tab is “focused”
+  return (
+    <View pointerEvents="box-none" style={styles.centerWrap}>
+      <Pressable
+        onPress={onPress}
+        accessibilityRole="button"
+        accessibilityLabel="Identify a plant"
+        style={({ pressed }) => [{ transform: [{ scale: pressed ? 0.96 : 1 }] }]}
+        hitSlop={12}
+      >
+        <LinearGradient
+          colors={['#5BE49B', '#00B37E', '#007A5B']} // tasteful green gradient
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.centerButton}
+        >
+          <View style={styles.centerButtonInner}>
+            <IconSymbol name="camera.fill" size={26} color="#ffffff" />
+          </View>
+        </LinearGradient>
+      </Pressable>
+    </View>
+  );
+}
+
+function MainTabs() {
+  const { theme } = useTheme();
+
+  return (
+    <Tab.Navigator
+      initialRouteName="Home"
+      backBehavior="history"
+      screenOptions={{
+        headerShown: false,
+        tabBarActiveTintColor: theme.colors.primary,
+        tabBarInactiveTintColor: theme.colors.mutedText,
+        tabBarStyle: [
+          {
+            backgroundColor: theme.colors.card,
+            borderTopColor: theme.colors.border,
+            height: 64,
+          },
+          // Extra bottom padding on Android for the floating button overlap
+          Platform.select({ android: { paddingBottom: 4 } }) as any,
+        ],
+        tabBarLabelStyle: { fontSize: 12 },
+      }}
+    >
+      <Tab.Screen
+        name="Home"
+        component={HomeScreen as any}
+        options={{
+          tabBarIcon: ({ color, size }) => (
+            <IconSymbol name="house.fill" color={color} size={size} />
+          ),
+        }}
+      />
+
+      <Tab.Screen
+        name="Discover"
+        component={DiscoverScreen as any}
+        options={{
+          tabBarIcon: ({ color, size }) => (
+            <IconSymbol name="photo" color={color} size={size} />
+          ),
+        }}
+      />
+
+      {/* Center “Identify” action — mocked */}
+      <Tab.Screen
+        name="Identify"
+        component={View as any} // no screen yet, just a placeholder
+        options={{
+          tabBarLabel: '',
+          tabBarIcon: () => null, // we render our own button
+          tabBarButton: () => (
+            <CenterIdentifyButton
+              onPress={() => {
+                Alert.alert(
+                  'Identify',
+                  'Plant identification coming soon 🌱\n(Mock button)'
+                );
+              }}
+            />
+          ),
+        }}
+        listeners={() => ({
+          tabPress: (e) => {
+            // prevent default tab navigation since we mock it
+            e.preventDefault();
+          },
+        })}
+      />
+
+      <Tab.Screen
+        name="MyPlants"
+        component={PlantsScreen as any}
+        options={{
+          title: 'My Plants',
+          tabBarIcon: ({ color, size }) => (
+            <IconSymbol name="leaf" color={color} size={size} />
+          ),
+        }}
+      />
+
+      <Tab.Screen
+        name="Account"
+        component={AccountScreen as any}
+        options={{
+          tabBarIcon: ({ color, size }) => (
+            <IconSymbol name="person.circle" color={color} size={size} />
+          ),
+        }}
+      />
+    </Tab.Navigator>
+  );
+}
+
+export default function RootNavigator() {
+  const { themeName, theme } = useTheme();
+  const { user, loading } = useAuth();
+
+  const navTheme = themeName === 'dark' ? DarkTheme : DefaultTheme;
+  const navigationTheme = {
+    ...navTheme,
+    colors: {
+      ...navTheme.colors,
+      background: theme.colors.background,
+      card: theme.colors.card,
+      text: theme.colors.text,
+      border: theme.colors.border,
+      primary: theme.colors.primary,
+    },
+  };
+
+  if (loading) return <View style={{ flex: 1, backgroundColor: theme.colors.background }} />;
+
+  return (
+    <NavigationContainer theme={navigationTheme as any}>
+      <Stack.Navigator screenOptions={{ headerShown: false }}>
+        {!user ? (
+          <>
+            <Stack.Screen name="SignIn" component={SignInScreen as any} />
+            <Stack.Screen name="SignUp" component={SignUpScreen as any} />
+            <Stack.Screen name="VerifyEmail" component={VerifyEmailScreen as any} />
+          </>
+        ) : (
+          <>
+            <Stack.Screen name="MainTabs" component={MainTabs} />
+            <Stack.Screen name="AddPlant" component={AddPlantScreen as any} />
+            <Stack.Screen name="PlantDetail" component={PlantDetailScreen as any} />
+          </>
+        )}
+      </Stack.Navigator>
+    </NavigationContainer>
+  );
+}
+
+const styles = StyleSheet.create({
+  centerWrap: {
+    position: 'absolute',
+    top: -24,             // lift above the tab bar
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+  },
+  centerButton: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    borderWidth: 2,
+    borderColor: 'rgba(255,255,255,0.55)',
+    elevation: 6,
+    shadowColor: '#000',
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+  },
+  centerButtonInner: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+});
