@@ -421,9 +421,9 @@ function EnvironmentSection({ plantName, plantLocation, potType, potHeightIn, po
           {!!potType && <Pill label={potType} />}
           {!!drainageSystem && <Pill label={`Drainage: ${drainageSystem}`} />}
         </View>
-        {!!(potHeightIn && potDiameterIn) && (
+        {!!(potHeightIn || potDiameterIn) && (
           <View style={{ marginTop: 8 }}>
-            <PotBlueprintViz heightIn={potHeightIn} diameterIn={potDiameterIn} potType={potType ?? null} drainageSystem={drainageSystem ?? null} />
+            <PotBlueprintViz heightIn={potHeightIn || 0} diameterIn={potDiameterIn || 0} potType={potType ?? null} drainageSystem={drainageSystem ?? null} />
           </View>
         )}
         {potType || potHeightIn || potDiameterIn || drainageSystem ? (

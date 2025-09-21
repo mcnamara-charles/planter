@@ -21,53 +21,57 @@ export default function PotBlueprintViz({ heightIn, diameterIn, potType, drainag
 
   return (
     <View style={[styles.root]}>
-      {/* Front view */}
-      <View style={[styles.panel, { backgroundColor: theme.colors.card, borderColor: theme.colors.border }]}>
-        <ThemedText style={styles.panelLabel}>Front</ThemedText>
-        <View style={styles.panelInner}>
-          <GridMesh />
+      {/* Front view (only if height provided) */}
+      {heightIn > 0 && (
+        <View style={[styles.panel, { backgroundColor: theme.colors.card, borderColor: theme.colors.border }]}>
+          <ThemedText style={styles.panelLabel}>Front</ThemedText>
+          <View style={styles.panelInner}>
+            <GridMesh />
 
-          {/* Row: label (left) + exact-height line + gap + pot (right) */}
-          <View style={styles.row}>
-            <View style={{ flex: 1 }} />
+            {/* Row: label (left) + exact-height line + gap + pot (right) */}
+            <View style={styles.row}>
+              <View style={{ flex: 1 }} />
 
-            {/* Label to the LEFT of the dimension line */}
-            <ThemedText style={styles.dimLabelLeft}>{dimHeightText}</ThemedText>
+              {/* Label to the LEFT of the dimension line */}
+              <ThemedText style={styles.dimLabelLeft}>{dimHeightText}</ThemedText>
 
-            {/* Dimension line exactly the same height as the pot graphic */}
-            <View style={[styles.dimVerticalRule, { borderColor: theme.colors.text, height: POT_TARGET }]} />
+              {/* Dimension line exactly the same height as the pot graphic */}
+              <View style={[styles.dimVerticalRule, { borderColor: theme.colors.text, height: POT_TARGET }]} />
 
-            <View style={{ width: 8 }} />
+              <View style={{ width: 8 }} />
 
-            {/* Pot outline scaled to POT_TARGET height (now truly fills 5 grid squares) */}
-            <PotFrontOutline color={theme.colors.text as string} />
+              {/* Pot outline scaled to POT_TARGET height (now truly fills 5 grid squares) */}
+              <PotFrontOutline color={theme.colors.text as string} />
+            </View>
           </View>
         </View>
-      </View>
+      )}
 
-      {/* Top view */}
-      <View style={[styles.panel, { backgroundColor: theme.colors.card, borderColor: theme.colors.border }]}>
-        <ThemedText style={styles.panelLabel}>Top</ThemedText>
-        <View style={styles.panelInner}>
-          <GridMesh />
+      {/* Top view (only if diameter provided) */}
+      {diameterIn > 0 && (
+        <View style={[styles.panel, { backgroundColor: theme.colors.card, borderColor: theme.colors.border }]}>
+          <ThemedText style={styles.panelLabel}>Top</ThemedText>
+          <View style={styles.panelInner}>
+            <GridMesh />
 
-          {/* Row: label (left) + exact-diameter line + gap + circle (right) */}
-          <View style={styles.row}>
-            <View style={{ flex: 1 }} />
+            {/* Row: label (left) + exact-diameter line + gap + circle (right) */}
+            <View style={styles.row}>
+              <View style={{ flex: 1 }} />
 
-            {/* Label to the LEFT of the vertical diameter line */}
-            <ThemedText style={styles.dimLabelLeft}>{dimDiameterText}</ThemedText>
+              {/* Label to the LEFT of the vertical diameter line */}
+              <ThemedText style={styles.dimLabelLeft}>{dimDiameterText}</ThemedText>
 
-            {/* Vertical diameter line exactly the circle's diameter */}
-            <View style={[styles.dimVerticalRule, { borderColor: theme.colors.text, height: POT_TARGET }]} />
+              {/* Vertical diameter line exactly the circle's diameter */}
+              <View style={[styles.dimVerticalRule, { borderColor: theme.colors.text, height: POT_TARGET }]} />
 
-            <View style={{ width: 8 }} />
+              <View style={{ width: 8 }} />
 
-            {/* Top circle sized to POT_TARGET (same visual height as pot) */}
-            <View style={[styles.topCircle, { borderColor: theme.colors.text }]} />
+              {/* Top circle sized to POT_TARGET (same visual height as pot) */}
+              <View style={[styles.topCircle, { borderColor: theme.colors.text }]} />
+            </View>
           </View>
         </View>
-      </View>
+      )}
     </View>
   )
 }
