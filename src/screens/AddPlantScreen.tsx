@@ -95,7 +95,7 @@ export default function AddPlantScreen() {
         if (isEdit && params?.userPlantId) {
           const { data: up } = await supabase
             .from('user_plants')
-            .select('plants_table_id, nickname, custom_species_name, acquired_at, acquired_from, location, pot_type, pot_height_in, pot_diameter_in, drainage_system, soil_mix')
+            .select('plants_table_id, nickname, custom_species_name, acquired_at, acquired_from, location, pot_type, pot_height_in, pot_diameter_in, drainage_system, soil_mix, default_plant_photo_id')
             .eq('id', params.userPlantId)
             .maybeSingle();
 
@@ -107,6 +107,32 @@ export default function AddPlantScreen() {
             setPotHeightIn(up.pot_height_in ? String(up.pot_height_in) : '');
             setPotDiameterIn(up.pot_diameter_in ? String(up.pot_diameter_in) : '');
             setDrainageSystem(up.drainage_system ?? '');
+            // Prefill photo if present
+            if (up.default_plant_photo_id) {
+              try {
+                const val = String(up.default_plant_photo_id);
+                const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+                if (uuidRe.test(val)) {
+                  const { data: pr } = await supabase
+                    .from('user_plant_photos')
+                    .select('bucket, object_path')
+                    .eq('id', val)
+                    .maybeSingle();
+                  if (pr?.object_path) {
+                    const { data: signed } = await supabase.storage
+                      .from(pr.bucket || 'plant-photos')
+                      .createSignedUrl(pr.object_path, 60 * 60);
+                    if (signed?.signedUrl) setPhoto({ uri: signed.signedUrl });
+                  }
+                } else {
+                  // Legacy path; try signing directly from default bucket
+                  const { data: signed } = await supabase.storage
+                    .from('plant-photos')
+                    .createSignedUrl(val, 60 * 60);
+                  if (signed?.signedUrl) setPhoto({ uri: signed.signedUrl });
+                }
+              } catch {}
+            }
             // Prefill soil mix rows from JSON object
             const mixObj = (up as any).soil_mix as Record<string, number> | null;
             if (mixObj && typeof mixObj === 'object') {
@@ -388,7 +414,7 @@ export default function AddPlantScreen() {
 
             {/* Photo */}
             <View style={styles.fieldGroup}>
-              <ThemedText style={styles.label}>Photo</ThemedText>
+              <ThemedText style={styles.label}>Main Photo</ThemedText>
               {photo?.uri ? (
                 <View style={styles.photoCard}>
                   <Image source={{ uri: photo.uri }} style={styles.photoCardImage} contentFit="cover" />
