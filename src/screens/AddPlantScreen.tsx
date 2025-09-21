@@ -42,6 +42,8 @@ export default function AddPlantScreen() {
   const [photo, setPhoto] = useState<{ uri: string; width?: number; height?: number; fileName?: string; type?: string } | null>(null);
   const [saving, setSaving] = useState(false);
   const [speciesResetKey, setSpeciesResetKey] = useState(0);
+  const initialPayloadRef = useRef<any | null>(null);
+  const [hasChanges, setHasChanges] = useState(false);
   const [androidOffset, setAndroidOffset] = useState(0);
 
   const KEYBOARD_OFFSET = Platform.OS === 'ios' ? 88 : androidOffset;
@@ -95,7 +97,7 @@ export default function AddPlantScreen() {
         if (isEdit && params?.userPlantId) {
           const { data: up } = await supabase
             .from('user_plants')
-            .select('plants_table_id, nickname, custom_species_name, acquired_at, acquired_from, location, pot_type, pot_height_in, pot_diameter_in, drainage_system, soil_mix, default_plant_photo_id')
+            .select('plants_table_id, nickname, custom_species_name, propagated_from_user_plant_id, acquired_at, acquired_from, location, pot_type, pot_height_in, pot_diameter_in, drainage_system, soil_mix, default_plant_photo_id')
             .eq('id', params.userPlantId)
             .maybeSingle();
 
@@ -103,6 +105,7 @@ export default function AddPlantScreen() {
             setNickname(up.nickname ?? '');
             setAcquiredFrom(up.acquired_from ?? '');
             setLocation(up.location ?? '');
+            setPropagatedFrom(up.propagated_from_user_plant_id ?? '');
             setPotType(up.pot_type ?? '');
             setPotHeightIn(up.pot_height_in ? String(up.pot_height_in) : '');
             setPotDiameterIn(up.pot_diameter_in ? String(up.pot_diameter_in) : '');
@@ -147,10 +150,12 @@ export default function AddPlantScreen() {
             } else {
               setSoilRows([]);
             }
+            let acquiredOn: string | null = null;
             if (up.acquired_at) {
               const iso = String(up.acquired_at);
               const m = iso.match(/^\d{4}-\d{2}-\d{2}/);
-              setAcquiredAt(m ? m[0] : iso);
+              acquiredOn = m ? m[0] : iso;
+              setAcquiredAt(acquiredOn);
             }
 
             if (up.plants_table_id) {
@@ -170,6 +175,26 @@ export default function AddPlantScreen() {
               setSpeciesCommon(up.custom_species_name || '');
               setSpeciesScientific('');
             }
+            // Build initial payload snapshot for change detection
+            const initialPlantsId = up.plants_table_id ? String(up.plants_table_id) : null;
+            const initialCustomName = initialPlantsId ? null : (up.custom_species_name ?? null);
+            const normSoil: Record<string, number> | null = (up as any).soil_mix && typeof (up as any).soil_mix === 'object'
+              ? Object.fromEntries(Object.entries((up as any).soil_mix).map(([k, v]) => [String(k), Number(v as any)]))
+              : null;
+            initialPayloadRef.current = {
+              plants_table_id: initialPlantsId,
+              custom_species_name: initialCustomName,
+              nickname: up.nickname || null,
+              propagated_from_user_plant_id: up.propagated_from_user_plant_id ?? null,
+              acquired_at: acquiredOn,
+              acquired_from: up.acquired_from || null,
+              location: up.location || null,
+              pot_type: up.pot_type || null,
+              pot_height_in: up.pot_height_in ? Number(up.pot_height_in) : null,
+              pot_diameter_in: up.pot_diameter_in ? Number(up.pot_diameter_in) : null,
+              drainage_system: up.drainage_system || null,
+              soil_mix: normSoil,
+            };
           }
         }
       } catch {}
@@ -234,43 +259,67 @@ export default function AddPlantScreen() {
       acquiredDate = acquiredAt.trim();
     }
 
-    // Decide species mapping
+    // Decide species mapping (kept for insert path)
     const usePlantsId = !!speciesId;
-    const plants_table_id = usePlantsId ? speciesId : null;
-    const custom_species_name = usePlantsId ? null : (speciesCommon.trim() || null); // <-- use COMMON for custom
+    const plantsTableIdInsert = usePlantsId ? speciesId : null;
+    const customSpeciesNameInsert = usePlantsId ? null : (speciesCommon.trim() || null); // <-- use COMMON for custom
+
+    // Build potential payload now to check changes before we flip saving=true
+    const usePlantsIdPre = !!speciesId;
+    const plants_table_id = usePlantsIdPre ? speciesId : null;
+    const custom_species_name = usePlantsIdPre ? null : (speciesCommon.trim() || null);
+    const nextPayloadForCompare = {
+      plants_table_id,
+      custom_species_name,
+      nickname: nickname || null,
+      propagated_from_user_plant_id: propagatedFrom || null,
+      acquired_at: acquiredDate,
+      acquired_from: acquiredFrom || null,
+      location: location || null,
+      pot_type: potType || null,
+      pot_height_in: potHeightIn ? Number(potHeightIn) : null,
+      pot_diameter_in: potDiameterIn ? Number(potDiameterIn) : null,
+      drainage_system: drainageSystem || null,
+      soil_mix: buildSoilMixObject(soilRows),
+    } as const;
+
+    if (isEdit && initialPayloadRef.current) {
+      const changed = JSON.stringify(initialPayloadRef.current) !== JSON.stringify(nextPayloadForCompare);
+      if (!changed) {
+        // No changes: do nothing (stay on page)
+        return;
+      }
+    }
 
     try {
       setSaving(true);
       let currentPlantId: string | undefined = editingId ?? undefined;
 
       if (isEdit && currentPlantId) {
-        // UPDATE
+        // Compute intended update payload and compare with initial snapshot
+        const nextPayload = nextPayloadForCompare;
+
+        const prev = initialPayloadRef.current;
+        const changed = JSON.stringify(prev) !== JSON.stringify(nextPayload);
+
+        if (!changed) {
+          // Nothing changed; skip update and timeline event (should not reach due to pre-check)
+          return;
+        }
+
         const { error: updErr } = await supabase
           .from('user_plants')
-          .update({
-            plants_table_id,
-            custom_species_name,
-            nickname: nickname || null,
-            propagated_from_user_plant_id: propagatedFrom || null,
-            acquired_at: acquiredDate,
-            acquired_from: acquiredFrom || null,
-            location: location || null,
-            pot_type: potType || null,
-            pot_height_in: potHeightIn ? Number(potHeightIn) : null,
-            pot_diameter_in: potDiameterIn ? Number(potDiameterIn) : null,
-            drainage_system: drainageSystem || null,
-            soil_mix: buildSoilMixObject(soilRows),
-          })
+          .update(nextPayload as any)
           .eq('id', currentPlantId);
         if (updErr) throw updErr;
-  
+
         await createTimelineEvent({ userPlantId: currentPlantId, type: 'edited' });
       } else {
         // INSERT
         const insertPayload: any = {
           owner_id: user.id,
-          plants_table_id,
-          custom_species_name,
+          plants_table_id: plantsTableIdInsert,
+          custom_species_name: customSpeciesNameInsert,
           nickname: nickname || null,
           propagated_from_user_plant_id: propagatedFrom || null,
           acquired_at: acquiredDate,
@@ -348,6 +397,32 @@ export default function AddPlantScreen() {
     }
   };
 
+  // Track hasChanges for edit mode to control Save button state
+  useEffect(() => {
+    if (!isEdit || !initialPayloadRef.current) {
+      setHasChanges(true); // allow saving in add mode or before prefill load
+      return;
+    }
+    const currUsePlantsId = !!speciesId;
+    const curr_plants_table_id = currUsePlantsId ? speciesId : null;
+    const curr_custom_species_name = currUsePlantsId ? null : (speciesCommon.trim() || null);
+    const currentPayload = {
+      plants_table_id: curr_plants_table_id,
+      custom_species_name: curr_custom_species_name,
+      nickname: nickname || null,
+      propagated_from_user_plant_id: propagatedFrom || null,
+      acquired_at: acquiredAt.trim().length > 0 ? acquiredAt.trim() : null,
+      acquired_from: acquiredFrom || null,
+      location: location || null,
+      pot_type: potType || null,
+      pot_height_in: potHeightIn ? Number(potHeightIn) : null,
+      pot_diameter_in: potDiameterIn ? Number(potDiameterIn) : null,
+      drainage_system: drainageSystem || null,
+      soil_mix: buildSoilMixObject(soilRows),
+    } as const;
+    setHasChanges(JSON.stringify(initialPayloadRef.current) !== JSON.stringify(currentPayload));
+  }, [isEdit, speciesId, speciesCommon, nickname, propagatedFrom, acquiredAt, acquiredFrom, location, potType, potDiameterIn, potHeightIn, drainageSystem, soilRows]);
+
   return (
     <KeyboardAvoidingView 
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'} 
@@ -407,7 +482,7 @@ export default function AddPlantScreen() {
                 style={[styles.input, { backgroundColor: theme.colors.input, borderColor: theme.colors.border, color: theme.colors.text }]}
                 value={nickname}
                 onChangeText={setNickname}
-                placeholder="Ruby"
+                placeholder="Enter nickname (optional)"
                 placeholderTextColor={theme.colors.mutedText}
               />
             </View>
@@ -498,7 +573,7 @@ export default function AddPlantScreen() {
                 style={[styles.input, { backgroundColor: theme.colors.input, borderColor: theme.colors.border, color: theme.colors.text }]}
                 value={potDiameterIn}
                 onChangeText={setPotDiameterIn}
-                placeholder="6"
+                placeholder="Number"
                 placeholderTextColor={theme.colors.mutedText}
               />
             </View>
@@ -510,7 +585,7 @@ export default function AddPlantScreen() {
                 style={[styles.input, { backgroundColor: theme.colors.input, borderColor: theme.colors.border, color: theme.colors.text }]}
                 value={potHeightIn}
                 onChangeText={setPotHeightIn}
-                placeholder="8"
+                placeholder="Number"
                 placeholderTextColor={theme.colors.mutedText}
               />
             </View>
@@ -565,7 +640,7 @@ export default function AddPlantScreen() {
                 )}
               </View>
             </View>
-            <TouchableOpacity style={[styles.primaryButton, { backgroundColor: theme.colors.primary, opacity: saving ? 0.6 : 1 }]} onPress={onSave} disabled={saving}>
+            <TouchableOpacity style={[styles.primaryButton, { backgroundColor: theme.colors.primary, opacity: saving ? 0.6 : (isEdit ? (hasChanges ? 1 : 0.45) : 1) }]} onPress={onSave} disabled={saving}>
               <ThemedText style={styles.primaryLabel}>Save</ThemedText>
             </TouchableOpacity>
             <TouchableOpacity style={styles.linkButton} onPress={() => (nav as any).goBack()}>
