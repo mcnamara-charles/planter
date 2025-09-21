@@ -1,6 +1,6 @@
 import { Image } from 'expo-image';
 import React, { useEffect, useState, useCallback } from 'react';
-import { StyleSheet, View, TouchableOpacity, RefreshControl } from 'react-native';
+import { StyleSheet, View, TouchableOpacity, RefreshControl, TextInput } from 'react-native';
 
 import ParallaxScrollView from '@/components/parallax-scroll-view';
 import { ThemedText } from '@/components/themed-text';
@@ -41,6 +41,7 @@ export default function PlantsScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false); // ⬅️ for pull-to-refresh
   const [error, setError] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
 
   const fetchPlants = useCallback(async () => {
     if (!user?.id) return;
@@ -49,7 +50,7 @@ export default function PlantsScreen() {
     if (firstLoad) setLoading(true);
     setError(null);
     try {
-      const { data, error } = await supabase
+      let query = supabase
         .from('user_plants')
         .select(`
           id,
@@ -71,6 +72,18 @@ export default function PlantsScreen() {
           )
         `)
         .eq('owner_id', user.id);
+
+      const q = search.trim();
+      if (q.length > 0) {
+        const term = `%${q}%`;
+        // Root filter for nickname
+        query = query.or(`nickname.ilike.${term}`);
+        // Nested filters for plants table (common/scientific)
+        // @ts-ignore supabase-js foreignTable option
+        query = query.or(`plant_name.ilike.${term},plant_scientific_name.ilike.${term}`, { foreignTable: 'plants' });
+      }
+
+      const { data, error } = await query;
 
       if (error) throw error;
       const rows = (data ?? []) as unknown as UserPlantJoined[];
@@ -193,11 +206,19 @@ export default function PlantsScreen() {
       setLoading(false);
       setRefreshing(false); // ensure we end pull-to-refresh if active
     }
-  }, [user?.id, refreshing, plants.length]);
+  }, [user?.id, refreshing, plants.length, search]);
 
   useEffect(() => {
     fetchPlants();
   }, [user?.id, fetchPlants]);
+
+  // Debounce search updates
+  useEffect(() => {
+    const t = setTimeout(() => {
+      fetchPlants();
+    }, 250);
+    return () => clearTimeout(t);
+  }, [search, fetchPlants]);
 
   useFocusEffect(
     useCallback(() => {
@@ -231,6 +252,19 @@ export default function PlantsScreen() {
         <ThemedView style={styles.titleContainer}>
           <ThemedText type="title">Plants</ThemedText>
         </ThemedView>
+
+        <View style={{ marginTop: 8 }}>
+          <TextInput
+            value={search}
+            onChangeText={setSearch}
+            placeholder="Search nickname or species..."
+            placeholderTextColor={theme.colors.mutedText}
+            style={[styles.searchInput, { backgroundColor: theme.colors.input, borderColor: theme.colors.border, color: theme.colors.text }]}
+            autoCapitalize="none"
+            autoCorrect={false}
+            clearButtonMode="while-editing"
+          />
+        </View>
 
         {loading ? (
           // skeleton grid in same layout as your cards
@@ -297,6 +331,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 12,
+  },
+  searchInput: {
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
   },
   cardContainer: {
     flexBasis: '48%',
