@@ -16,6 +16,7 @@ import PotDetailsFields, { type PotDetailsValues } from '@/components/PotDetails
 import SoilMixViz, { type SoilPart } from '@/components/SoilMixViz';
 import PotBlueprintViz from '@/components/PotBlueprintViz';
 import PlantTimeline from '@/components/PlantTimeline';
+import WaterModal from '@/components/WaterModal';
 
 type RouteParams = { id: string };
 
@@ -53,6 +54,11 @@ export default function PlantDetailScreen() {
   const [locationDraft, setLocationDraft] = useState('');
   const [openSection, setOpenSection] = useState<string | null>(null);
   const { user } = useAuth();
+  const [waterModalOpen, setWaterModalOpen] = useState(false);
+  const [waterMethod, setWaterMethod] = useState<'' | 'top water' | 'bottom water' | 'soak' | 'misting' | 'flush'>('');
+  const [waterType, setWaterType] = useState('');
+  const [waterAmount, setWaterAmount] = useState('');
+  const [waterMethodOpen, setWaterMethodOpen] = useState(false);
 
   const fetchDetails = useCallback(async (isPull: boolean = false) => {
     try {
@@ -273,7 +279,7 @@ export default function PlantDetailScreen() {
 							<View style={{ gap: 12 }}>
 								<ThemedText style={{ fontWeight: '800' }}>Care Actions</ThemedText>
 								<View style={{ flexDirection: 'row', flexWrap: 'wrap', columnGap: 8, rowGap: 8 }}>
-									<TouchableOpacity style={[styles.envBtn, { borderColor: theme.colors.border }]}> 
+									<TouchableOpacity style={[styles.envBtn, { borderColor: theme.colors.border }]} onPress={() => { setWaterMethod(''); setWaterType(''); setWaterAmount(''); setWaterModalOpen(true); }}> 
 										<ThemedText style={{ fontWeight: '700', color: theme.colors.primary }}>Water</ThemedText>
 									</TouchableOpacity>
 									<TouchableOpacity style={[styles.envBtn, { borderColor: theme.colors.border }]}> 
@@ -313,6 +319,7 @@ export default function PlantDetailScreen() {
         </>
       )}
       </ParallaxScrollView>
+      <WaterModal open={waterModalOpen} onClose={() => setWaterModalOpen(false)} userPlantId={id} onSaved={() => {}} />
       {/* Location modal */}
       {locationModalOpen && (
         <View style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.35)', alignItems: 'center', justifyContent: 'center' }}>

@@ -101,6 +101,7 @@ const EVENT_MAP: Record<string, EventConfig> = {
       if (d.moisture_before) chips.push(`Before: ${d.moisture_before}`);
       if (d.moisture_after) chips.push(`After: ${d.moisture_after}`);
       if (d.method) chips.push(String(d.method));
+      if (d.water_type) chips.push(String(d.water_type));
       return chips;
     },
   },
@@ -631,7 +632,7 @@ const styles = StyleSheet.create({
   },
   chip: {
     borderWidth: StyleSheet.hairlineWidth,
-    paddingHorizontal: 10,
+    paddingHorizontal: 14,
     paddingVertical: 6,
     borderRadius: 999,
   },

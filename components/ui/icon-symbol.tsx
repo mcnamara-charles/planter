@@ -26,6 +26,8 @@ const MAPPING: Record<string, IconDescriptor> = {
   star: { lib: 'material', name: 'star' },
   'chevron.left.forwardslash.chevron.right': { lib: 'material', name: 'code' },
   'chevron.right': { lib: 'material', name: 'chevron-right' },
+  'chevron.down': { lib: 'entypo', name: 'chevron-down' },
+  'chevron.up': { lib: 'entypo', name: 'chevron-up' },
   'camera.fill': { lib: 'material', name: 'photo-camera' },
   photo: { lib: 'material', name: 'photo' },
   pencil: { lib: 'material', name: 'edit' },
