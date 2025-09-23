@@ -632,7 +632,7 @@ const styles = StyleSheet.create({
   },
   chip: {
     borderWidth: StyleSheet.hairlineWidth,
-    paddingHorizontal: 14,
+    paddingHorizontal: 15,
     paddingVertical: 6,
     borderRadius: 999,
   },

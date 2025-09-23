@@ -3,6 +3,7 @@
 
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import Entypo from '@expo/vector-icons/Entypo';
+import AntDesign from '@expo/vector-icons/AntDesign';
 import { SymbolWeight } from 'expo-symbols';
 import { ComponentProps } from 'react';
 import { OpaqueColorValue, type StyleProp, type TextStyle } from 'react-native';
@@ -10,10 +11,13 @@ import { OpaqueColorValue, type StyleProp, type TextStyle } from 'react-native';
 // Per-library name types
 type MaterialIconName = ComponentProps<typeof MaterialIcons>['name'];
 type EntypoIconName = ComponentProps<typeof Entypo>['name'];
+type AntIconName = ComponentProps<typeof AntDesign>['name'];
 
 type IconDescriptor =
   | { lib: 'material'; name: MaterialIconName }
-  | { lib: 'entypo'; name: EntypoIconName };
+  | { lib: 'entypo'; name: EntypoIconName }
+  | { lib: 'ant'; name: AntIconName };
+
 
 // Map any public string key → concrete library + glyph name
 const MAPPING: Record<string, IconDescriptor> = {
@@ -33,7 +37,7 @@ const MAPPING: Record<string, IconDescriptor> = {
   pencil: { lib: 'material', name: 'edit' },
   'trash.fill': { lib: 'material', name: 'delete' },
   'xmark.circle.fill': { lib: 'material', name: 'cancel' },
-
+  openai: { lib: 'ant', name: 'open-ai' },
   // new ones
   heart: { lib: 'material', name: 'favorite-border' },
   'heart.fill': { lib: 'material', name: 'favorite' },
@@ -74,9 +78,11 @@ export function IconSymbol({
     // Fallback to a helpful Material outline if a bad key slips in
     return <MaterialIcons color={color} size={size} name="help-outline" style={style} />;
   }
-
   if (entry.lib === 'entypo') {
     return <Entypo color={color} size={size} name={entry.name} style={style} />;
+  }
+  if (entry.lib === 'ant') {
+    return <AntDesign color={color} size={size} name={entry.name} style={style} />;
   }
 
   // default: material
