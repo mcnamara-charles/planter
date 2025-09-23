@@ -16,6 +16,8 @@ import SignInScreen from '@/src/screens/SignInScreen';
 import SignUpScreen from '@/src/screens/SignUpScreen';
 import VerifyEmailScreen from '@/src/screens/VerifyEmailScreen';
 import AddPlantScreen from '@/src/screens/AddPlantScreen';
+import CameraScreen from '@/src/screens/CameraScreen';
+import CameraPreviewScreen from '@/src/screens/CameraPreviewScreen';
 import PlantDetailScreen from '../../src/screens/PlantDetailScreen';
 
 const Stack = createNativeStackNavigator();
@@ -47,7 +49,7 @@ function CenterIdentifyButton({ onPress }: { onPress: () => void }) {
   );
 }
 
-function MainTabs() {
+function MainTabs({ navigation }: any) {
   const { theme } = useTheme();
 
   return (
@@ -91,21 +93,14 @@ function MainTabs() {
       />
 
       {/* Center “Identify” action — mocked */}
-      <Tab.Screen
+          <Tab.Screen
         name="Identify"
         component={View as any} // no screen yet, just a placeholder
         options={{
           tabBarLabel: '',
           tabBarIcon: () => null, // we render our own button
           tabBarButton: () => (
-            <CenterIdentifyButton
-              onPress={() => {
-                Alert.alert(
-                  'Identify',
-                  'Plant identification coming soon 🌱\n(Mock button)'
-                );
-              }}
-            />
+            <CenterIdentifyButton onPress={() => navigation.navigate('Camera')} />
           ),
         }}
         listeners={() => ({
@@ -171,6 +166,8 @@ export default function RootNavigator() {
         ) : (
           <>
             <Stack.Screen name="MainTabs" component={MainTabs} />
+            <Stack.Screen name="Camera" component={CameraScreen as any} />
+            <Stack.Screen name="CameraPreview" component={CameraPreviewScreen as any} />
             <Stack.Screen name="AddPlant" component={AddPlantScreen as any} />
             <Stack.Screen name="PlantDetail" component={PlantDetailScreen as any} />
           </>

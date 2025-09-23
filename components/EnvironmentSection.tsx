@@ -45,7 +45,7 @@ export default function EnvironmentSection({
         <ThemedText style={{ fontWeight: '800' }}>Location</ThemedText>
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
           <ThemedText style={{ opacity: 0.85 }}>{plantLocation || 'Not set'}</ThemedText>
-          <ButtonPill label="Move" onPress={onMove} />
+          <ButtonPill label="Move" variant="outline" color="primary" onPress={onMove} />
         </View>
       </View>
 

@@ -24,7 +24,7 @@ export default function TopBar({
         <TouchableOpacity style={styles.iconBtn} accessibilityRole="button" accessibilityLabel="Go back" onPress={onBack}>
           <IconSymbol name="arrow.left" color={theme.colors.text} size={20} />
         </TouchableOpacity>
-        <ThemedText style={styles.topTitle} numberOfLines={1}>
+        <ThemedText style={styles.topTitle} numberOfLines={1} ellipsizeMode="tail">
           {title}
         </ThemedText>
       </View>
@@ -50,5 +50,5 @@ const styles = StyleSheet.create({
   leftGroup: { flexDirection: 'row', alignItems: 'center', flexShrink: 1 },
   iconBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center', marginRight: 4 },
   rightGroup: { flexDirection: 'row', alignItems: 'center', gap: 2 },
-  topTitle: { fontWeight: '600', fontSize: 18, lineHeight: 20, includeFontPadding: false as any },
+  topTitle: { fontWeight: '600', fontSize: 18, lineHeight: 20, includeFontPadding: false as any, maxWidth: '75%', marginRight: 15 },
 });

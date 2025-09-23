@@ -55,7 +55,8 @@ export default function SoilMixViz({ mix }: Props) {
 
   const normalized = useMemo(() => {
     const items = [...mix].sort((a, b) => b.parts - a.parts);
-    const maxParts = Math.max(1, ...items.map((i) => i.parts));
+    // Use the true maximum so fractional parts scale proportionally (e.g., 0.25 vs 1)
+    const maxParts = Math.max(...items.map((i) => i.parts), 0.0001);
     const top = items.filter((i) => i.parts === items[0].parts);
     const rest = items.slice(top.length);
     return { top, rest, maxParts };
@@ -64,8 +65,10 @@ export default function SoilMixViz({ mix }: Props) {
   const renderRow = (items: SoilPart[], maxParts: number, isTop: boolean) => {
     // Precompute sizes and row max to keep circles aligned regardless of text wraps
     const computed = items.map((it) => {
-      const scale = Math.max(0.55, Math.min(1, it.parts / maxParts));
-      const size = Math.round(84 * (isTop ? Math.max(scale, 0.85) : scale));
+      // Scale strictly by ratio to max; keep a modest visual floor so tiny fractions remain visible
+      const rawScale = it.parts / maxParts;
+      const clampedScale = Math.max(isTop ? 0.35 : 0.25, Math.min(1, rawScale));
+      const size = Math.round(84 * clampedScale);
       const visual = getSoilVisual(it.label);
       const color = visual.color;
       const icon = visual.icon || it.icon || 'leaf';
@@ -82,9 +85,11 @@ export default function SoilMixViz({ mix }: Props) {
                 <IconSymbol name={icon} size={Math.round(size * 0.42)} color={'#ffffff'} />
               </View>
             </View>
-            <ThemedText style={styles.itemText} numberOfLines={2}>
-              {`${it.parts} part${it.parts === 1 ? '' : 's'} ${it.label}`.toLowerCase()}
-            </ThemedText>
+            <View style={styles.itemTextWrap}>
+              <ThemedText style={styles.itemText} numberOfLines={2}>
+                {`${it.parts} part${it.parts === 1 ? '' : 's'} ${it.label}`.toLowerCase()}
+              </ThemedText>
+            </View>
           </View>
         ))}
       </View>
@@ -101,12 +106,14 @@ export default function SoilMixViz({ mix }: Props) {
 
 const styles = StyleSheet.create({
   root: { gap: 12, marginVertical: 10 },
-  row: { flexDirection: 'row', justifyContent: 'center', alignItems: 'flex-end', flexWrap: 'wrap', columnGap: 16, rowGap: 10 },
+  row: { flexDirection: 'row', justifyContent: 'center', alignItems: 'flex-end', flexWrap: 'wrap', columnGap: 16, rowGap: 2 },
   rowTop: {},
   rowBottom: {},
   itemWrap: { alignItems: 'center', maxWidth: 120 },
   circleSlot: { alignItems: 'center', justifyContent: 'flex-end', width: 120 },
   circle: { alignItems: 'center', justifyContent: 'center', borderWidth: StyleSheet.hairlineWidth },
+  // Fix height for two lines so wrapped text doesn't push circles up or down
+  itemTextWrap: { height: 40, justifyContent: 'flex-start' },
   itemText: { marginTop: 4, textAlign: 'center', fontWeight: '600', fontSize: 11, lineHeight: 14 },
 });
 

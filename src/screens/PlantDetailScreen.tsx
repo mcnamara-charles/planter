@@ -1,19 +1,19 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Alert, Modal, Pressable, StyleSheet, View, BackHandler, Platform } from 'react-native';
 import { Image } from 'expo-image';
-import { useNavigation, useRoute } from '@react-navigation/native';
+import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
 import ParallaxScrollView from '@/components/parallax-scroll-view';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useTheme } from '@/context/themeContext';
 import { useAuth } from '@/context/AuthContext';
 import { supabase } from '@/services/supabaseClient';
-import { IconSymbol } from '@/components/ui/icon-symbol';
 import SkeletonTile from '@/components/SkeletonTile';
-import SoilMixViz from '@/components/SoilMixViz';
 import PlantTimeline from '@/components/PlantTimeline';
 import WaterModal from '@/components/WaterModal';
+import ConfirmNameModal from '@/components/ConfirmNameModal';
 import { useGeneratePlantFacts } from '@/hooks/useGeneratePlantFacts';
+import { useGenerateCare } from '@/hooks/useGenerateCare';
 
 import TopBar from '@/components/TopBar';
 import MenuSheet from '@/components/MenuSheet';
@@ -21,10 +21,11 @@ import Section from '@/components/Section';
 import AboutBox from '@/components/AboutBox';
 import CompactStatus from '@/components/CompactStatus';
 import EnvironmentSection from '@/components/EnvironmentSection';
+import CareSection from '@/components/CareSection';
+import SoilMixViz from '@/components/SoilMixViz';
 import LocationModal from '@/components/LocationModal';
 import SoilModal from '@/components/SoilModal';
 import PotDetailsModal from '@/components/PotDetailsModal';
-import GridPanel from '@/components/GridPanel';
 import { ButtonPill } from '@/components/Buttons';
 import GenerateFactsButton from '@/components/GenerateFactsButton';
 
@@ -39,11 +40,23 @@ export default function PlantDetailScreen() {
   const { user } = useAuth();
 
   // ===== State (grouped) =====
-  const [ui, setUi] = useState({ menuOpen: false, heroLoaded: false, refreshing: false, timelineKey: 0, genLoading: false });
+  const [ui, setUi] = useState({
+    menuOpen: false,
+    heroLoaded: false,
+    refreshing: false,
+    timelineKey: 0,
+    genLoading: false,
+  });
+  const [overlay, setOverlay] = useState<{ visible: boolean; message: string }>({ visible: false, message: '' });
+
   const [status, setStatus] = useState({ loading: true, error: null as string | null });
+
   const [plant, setPlant] = useState({
     headerUrl: '',
+    // nickname (user-provided) stays in TopBar title
     displayName: '',
+    // show *this* below the header (from plants.plant_name)
+    commonName: '',
     scientific: '',
     description: '',
     availability: '' as Availability,
@@ -53,28 +66,69 @@ export default function PlantDetailScreen() {
     plantsTableId: null as string | null,
     pot: { type: '', heightIn: null as number | null, diameterIn: null as number | null, drainage: '' } as PotShape,
     soilMix: null as Record<string, number> | null,
+    propagationMethods: [] as { method: string; difficulty?: string | null; description?: string | null }[],
   });
 
   // Modals/drafts
-  const [modals, setModals] = useState({ water: false, location: false, soil: false, pot: false as boolean, potMode: 'add' as 'add' | 'repot' });
+  const [modals, setModals] = useState({
+    water: false,
+    location: false,
+    soil: false,
+    pot: false as boolean,
+    potMode: 'add' as 'add' | 'repot',
+    confirmName: { open: false, suggested: null as string | null },
+  });
   const [drafts, setDrafts] = useState({ location: '', soilRows: [] as SoilRowDraft[], potNote: '' });
   const [potDraft, setPotDraft] = useState({ potType: '', drainageSystem: '', potHeightIn: '', potDiameterIn: '' });
 
-  const [openSection, setOpenSection] = useState<
-    'care' | 'timeline' | 'environment' | 'propagation' | 'photos' | null
-  >(null);
-
-  const toggle = (key: NonNullable<typeof openSection>) =>
-    setOpenSection((curr) => (curr === key ? null : key));
+  const [openSection, setOpenSection] = useState<'care' | 'timeline' | 'environment' | 'propagation' | 'photos' | null>(null);
+  const toggle = (key: NonNullable<typeof openSection>) => setOpenSection((curr) => (curr === key ? null : key));
 
   // Debounce ref for favorite
   const favTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const { loading: genLoadingHook, run: generateFacts } = useGeneratePlantFacts();
-  const genLoading = ui.genLoading || genLoadingHook;
+  const { loading: genFactsLoading, run: generateFacts } = useGeneratePlantFacts();
+  const { loading: genCareLoading,  run: generateCare  } = useGenerateCare();
+  const genLoading = ui.genLoading || genFactsLoading || genCareLoading;
 
   const rarityLabel = useMemo(() => labelRarity(plant.rarity), [plant.rarity]);
   const availabilityLabel = useMemo(() => labelAvailability(plant.availability), [plant.availability]);
+
+  // Sort propagation methods by difficulty for display
+  const sortedPropagation = useMemo(() => {
+    const order: Record<string, number> = {
+      easy: 0,
+      moderate: 1,
+      challenging: 2,
+      very_challenging: 3,
+    };
+    return [...(plant.propagationMethods || [])].sort((a, b) => {
+      const da = order[(a.difficulty || '').toLowerCase()] ?? 99;
+      const db = order[(b.difficulty || '').toLowerCase()] ?? 99;
+      if (da !== db) return da - db;
+      return (a.method || '').localeCompare(b.method || '');
+    });
+  }, [plant.propagationMethods]);
+
+  // ===== Android hardware back handling =====
+  useFocusEffect(
+    React.useCallback(() => {
+      if (Platform.OS !== 'android') return undefined;
+      const onBack = () => {
+        if (overlay.visible) { setOverlay({ visible: false, message: '' }); return true; }
+        if (modals.water) { setModals((m) => ({ ...m, water: false })); return true; }
+        if (modals.location) { setModals((m) => ({ ...m, location: false })); return true; }
+        if (modals.soil) { setModals((m) => ({ ...m, soil: false })); return true; }
+        if (modals.pot) { setModals((m) => ({ ...m, pot: false })); return true; }
+        if ((modals as any).confirmName?.open) { setModals((m: any) => ({ ...m, confirmName: { open: false, suggested: null } })); return true; }
+        // Navigate back if possible; otherwise allow default behavior
+        if ((nav as any).canGoBack && (nav as any).canGoBack()) { (nav as any).goBack(); return true; }
+        return false;
+      };
+      const sub = BackHandler.addEventListener('hardwareBackPress', onBack);
+      return () => sub.remove();
+    }, [overlay.visible, modals.water, modals.location, modals.soil, modals.pot, (modals as any).confirmName?.open])
+  );
 
   // ===== Data fetch =====
   const fetchDetails = useCallback(async (isPull = false) => {
@@ -82,7 +136,9 @@ export default function PlantDetailScreen() {
       if (!isPull) setStatus((s) => ({ ...s, loading: true, error: null }));
       const { data: up, error: upErr } = await supabase
         .from('user_plants')
-        .select('id, nickname, plants_table_id, default_plant_photo_id, favorite, location, pot_type, pot_height_in, pot_diameter_in, drainage_system, soil_mix')
+        .select(
+          'id, nickname, plants_table_id, default_plant_photo_id, favorite, location, pot_type, pot_height_in, pot_diameter_in, drainage_system, soil_mix'
+        )
         .eq('id', id)
         .maybeSingle();
       if (upErr) throw upErr;
@@ -91,29 +147,38 @@ export default function PlantDetailScreen() {
       // signed hero url
       let hero = '';
       if (up.default_plant_photo_id) {
-        const { data: pr } = await supabase.from('user_plant_photos').select('bucket, object_path').eq('id', up.default_plant_photo_id).maybeSingle();
+        const { data: pr } = await supabase
+          .from('user_plant_photos')
+          .select('bucket, object_path')
+          .eq('id', up.default_plant_photo_id)
+          .maybeSingle();
         if (pr?.object_path) {
-          const { data: signed } = await supabase.storage.from(pr.bucket || 'plant-photos').createSignedUrl(pr.object_path, 3600, {
-            transform: { width: 1200, quality: 85, resize: 'contain' },
-          });
+          const { data: signed } = await supabase
+            .storage
+            .from(pr.bucket || 'plant-photos')
+            .createSignedUrl(pr.object_path, 3600, { transform: { width: 1200, quality: 85, resize: 'contain' } });
           hero = signed?.signedUrl ?? '';
         }
       }
 
       // names/details
-      let displayName = up.nickname || '';
+      let nickname = up.nickname || '';
+      let commonName = '';
       let scientific = '';
       let description = '';
       let availability: Availability = '';
       let rarity: Rarity = '';
 
+      let plantRow: any = null;
       if (up.plants_table_id) {
-        const { data: plantRow } = await supabase
+        const { data } = await supabase
           .from('plants')
-          .select('plant_name, plant_scientific_name, description, availability, rarity')
+          .select('plant_name, plant_scientific_name, description, availability, rarity, propagation_methods_json')
           .eq('id', up.plants_table_id)
           .maybeSingle();
-        displayName = displayName || plantRow?.plant_name || 'Unnamed Plant';
+        plantRow = data;
+
+        commonName = plantRow?.plant_name || '';
         scientific = plantRow?.plant_scientific_name || 'Unknown Scientific Name';
         description = plantRow?.description || '';
         availability = (plantRow?.availability as any) || '';
@@ -122,7 +187,8 @@ export default function PlantDetailScreen() {
 
       setPlant({
         headerUrl: hero,
-        displayName,
+        displayName: nickname || 'My Plant',
+        commonName: commonName || '',
         scientific,
         description,
         availability,
@@ -137,8 +203,8 @@ export default function PlantDetailScreen() {
           drainage: up.drainage_system ?? '',
         },
         soilMix: (up as any).soil_mix ?? null,
+        propagationMethods: ((plantRow as any)?.propagation_methods_json ?? []) as any[],
       });
-      setUi((u) => ({ ...u, heroLoaded: false }));
     } catch (e: any) {
       setStatus({ loading: false, error: e?.message ?? 'Failed to load plant' });
     } finally {
@@ -160,6 +226,15 @@ export default function PlantDetailScreen() {
 
   const isRemoteHeader = !!plant.headerUrl;
   const showHeaderSkeleton = isRemoteHeader && !ui.heroLoaded;
+
+  // ===== Helpers =====
+  const showOverlay = (message: string) => setOverlay({ visible: true, message });
+  const hideOverlay = () => setOverlay({ visible: false, message: '' });
+
+  const maybeApplySuggestedCommonName = useCallback(async (suggested?: string | null) => {
+    if (!suggested || !suggested.trim() || !plant.plantsTableId) return;
+    setModals((m) => ({ ...m, confirmName: { open: true, suggested } }));
+  }, [plant.plantsTableId]);
 
   // ===== Actions =====
   const toggleFavorite = useCallback(() => {
@@ -331,10 +406,12 @@ export default function PlantDetailScreen() {
         ) : (
           <>
             <ThemedView>
-              <ThemedText type="title">{plant.displayName}</ThemedText>
-              {!!plant.scientific && <ThemedText style={{ opacity: 0.7, fontStyle: 'italic' }}>{plant.scientific}</ThemedText>}
-              <CompactStatus rarity={rarityLabel} availability={availabilityLabel} />
-
+              {/* Common name under header (nickname remains in TopBar) */}
+              <ThemedText type="title">{plant.commonName || plant.displayName}</ThemedText>
+              {!!plant.scientific && (
+                <ThemedText style={{ opacity: 0.7, fontStyle: 'italic' }}>{plant.scientific}</ThemedText>
+              )}
+              <CompactStatus rarity={availabilityLabel ? rarityLabel : ''} availability={availabilityLabel} />
 
               <GenerateFactsButton
                 label={genLoading ? 'Generating…' : 'Generate Facts'}
@@ -342,11 +419,17 @@ export default function PlantDetailScreen() {
                 onPress={async () => {
                   if (!plant.plantsTableId) return;
                   try {
+                    setUi((u) => ({ ...u, genLoading: true }));
+                    setOverlay({ visible: true, message: 'Generating details…' });
+
                     const res = await generateFacts({
                       plantsTableId: plant.plantsTableId,
-                      commonName: plant.displayName,
+                      commonName: plant.commonName || plant.displayName,
                       scientificName: plant.scientific,
                     });
+
+                    setOverlay({ visible: true, message: 'Saving updates…' });
+
                     if (res) {
                       setPlant((p) => ({
                         ...p,
@@ -354,13 +437,20 @@ export default function PlantDetailScreen() {
                         availability: res.availability_status as Availability,
                         rarity: res.rarity_level as Rarity,
                       }));
-                    } else {
-                      Alert.alert('Generation failed', 'Please try again.');
                     }
+
                     await fetchDetails(true);
-                    Alert.alert('Updated', 'Description, rarity, and availability saved.');
+
+                    setOverlay({ visible: true, message: 'Done' });
+                    setTimeout(() => setOverlay({ visible: false, message: '' }), 500);
+
+                    // Offer to adopt suggested common name
+                    await maybeApplySuggestedCommonName(res?.suggested_common_name);
                   } catch (e: any) {
+                    setOverlay({ visible: false, message: '' });
                     Alert.alert('Generation failed', e?.message ?? 'Please try again.');
+                  } finally {
+                    setUi((u) => ({ ...u, genLoading: false }));
                   }
                 }}
               />
@@ -370,20 +460,20 @@ export default function PlantDetailScreen() {
 
             <View style={{ marginTop: 12 }}>
               <Section title="Care & Schedule" open={openSection === 'care'} onToggle={() => toggle('care')}>
-                <View style={{ gap: 12 }}>
-                  <ThemedText style={{ fontWeight: '800' }}>Care Actions</ThemedText>
-                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', columnGap: 8, rowGap: 8 }}>
-                    <ButtonPill
-                      label="Water"
-                      variant="outline"
-                      color="primary"
-                      onPress={() => setModals((m) => ({ ...m, water: true }))}
-                    />
-                    <ButtonPill label="Fertilize" variant="outline" color="primary" />
-                    <ButtonPill label="Prune"     variant="outline" color="primary" />
-                    <ButtonPill label="Observe"   variant="outline" color="primary" />
-                  </View>
-                </View>
+                <CareSection
+                  isOpen={openSection === 'care'}
+                  plantsTableId={plant.plantsTableId}
+                  commonName={plant.commonName}
+                  displayName={plant.displayName}
+                  scientificName={plant.scientific}
+                  showOverlay={(msg) => setOverlay({ visible: true, message: msg })}
+                  hideOverlay={() => setOverlay({ visible: false, message: '' })}
+                  onRefetch={() => fetchDetails(true)}
+                  onWater={() => setModals((m) => ({ ...m, water: true }))}   // <— opens WaterModal
+                  onFertilize={() => {}}
+                  onPrune={() => {}}
+                  onObserve={() => {}}
+                />
               </Section>
 
               <Section title="Timeline" open={openSection === 'timeline'} onToggle={() => toggle('timeline')}>
@@ -414,7 +504,9 @@ export default function PlantDetailScreen() {
                   }}
                   SoilMixSlot={
                     plant.soilMix && Object.keys(plant.soilMix).length > 0 ? (
-                      <SoilMixViz mix={Object.entries(plant.soilMix).map(([label, parts]) => ({ label, parts: Number(parts), icon: 'leaf' }))} />
+                      <SoilMixViz
+                        mix={Object.entries(plant.soilMix).map(([label, parts]) => ({ label, parts: Number(parts), icon: 'leaf' }))}
+                      />
                     ) : (
                       <View style={{ alignItems: 'center' }}>
                         <ButtonPill
@@ -448,16 +540,110 @@ export default function PlantDetailScreen() {
                 ) : null}
               </Section>
 
-              <Section title="Propagation" open={openSection === 'propagation'} onToggle={() => toggle('propagation')} />
+              <Section title="Propagation" open={openSection === 'propagation'} onToggle={() => toggle('propagation')}>
+                {sortedPropagation.length === 0 ? (
+                  <ThemedText style={{ opacity: 0.75 }}>No propagation methods available.</ThemedText>
+                ) : (
+                  <View style={{ gap: 16, paddingVertical: 8 }}>
+                    {sortedPropagation.map((pm, idx) => {
+                      const label = (pm.method || '')
+                        .trim()
+                        .toLowerCase()
+                        .replace(/_/g, ' ')
+                        .replace(/\b\w/g, (c) => c.toUpperCase());
+                      const diff = (pm.difficulty || '').toLowerCase();
+                      const maxBars = 4; // easy..very_challenging
+                      const level = diff === 'easy' ? 1 : diff === 'moderate' ? 2 : diff === 'challenging' ? 3 : diff === 'very_challenging' ? 4 : 0;
+                      const fillColor = level === 1
+                        ? '#10B981' // easy: green
+                        : level === 2
+                          ? '#F59E0B' // moderate: yellow-orange
+                          : level === 3
+                            ? '#F43F5E' // challenging: redder tone
+                            : level === 4
+                              ? '#EF4444' // very challenging: deep red
+                              : theme.colors.border;
+                      return (
+                        <View key={`${pm.method}-${idx}`} style={{ gap: 6 }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flexShrink: 1 }}>
+                              <ThemedText style={{ fontWeight: '800', fontSize: 20 }}>{label}</ThemedText>
+                              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                                <View style={{ flexDirection: 'row', gap: 2 }}>
+                                  {Array.from({ length: maxBars }).map((_, i) => (
+                                    <View
+                                      key={i}
+                                      style={{
+                                        width: 12,
+                                        height: 6,
+                                        borderRadius: 3,
+                                        backgroundColor: i < level ? fillColor : theme.colors.border,
+                                      }}
+                                    />
+                                  ))}
+                                </View>
+                                {!!diff && (
+                                  <ThemedText style={{ opacity: 0.8, fontWeight: '700' }}>
+                                    {diff.replace('_', ' ').replace(/^./, c => c.toUpperCase())}
+                                  </ThemedText>
+                                )}
+                              </View>
+                            </View>
+                          </View>
+                          {!!pm.description && (
+                            <ThemedText style={{ color: theme.colors.mutedText }}>{pm.description}</ThemedText>
+                          )}
+                        </View>
+                      );
+                    })}
+                  </View>
+                )}
+              </Section>
               <Section title="Photos" open={openSection === 'photos'} onToggle={() => toggle('photos')} />
             </View>
           </>
         )}
       </ParallaxScrollView>
 
-      {/* Modals */}
-      <WaterModal open={modals.water} onClose={() => setModals((m) => ({ ...m, water: false }))} userPlantId={id} onSaved={() => {}} />
+      {/* Full-page progress overlay */}
+      <Modal visible={overlay.visible} transparent animationType="fade">
+        <View style={styles.overlayBackdrop}>
+          <View style={[styles.overlayCard, { backgroundColor: theme.colors.card, borderColor: theme.colors.border }] }>
+            <ActivityIndicator color={theme.colors.text as any} />
+            <ThemedText style={{ marginTop: 12 }}>{overlay.message || 'Working…'}</ThemedText>
+          </View>
+          <Pressable style={styles.overlayBlocker} />
+        </View>
+      </Modal>
 
+      {/* Modals */}
+      <WaterModal open={modals.water} onClose={() => setModals((m) => ({ ...m, water: false }))} userPlantId={id} onSaved={() => setUi((u) => ({ ...u, timelineKey: u.timelineKey + 1 }))} />
+      <ConfirmNameModal
+        open={(modals as any).confirmName?.open}
+        suggested={(modals as any).confirmName?.suggested ?? null}
+        onCancel={() => setModals((m: any) => ({ ...m, confirmName: { open: false, suggested: null } }))}
+        onConfirm={async () => {
+          const suggested = (modals as any).confirmName?.suggested as string | null;
+          if (!suggested || !plant.plantsTableId) {
+            setModals((m: any) => ({ ...m, confirmName: { open: false, suggested: null } }));
+            return;
+          }
+          try {
+            setOverlay({ visible: true, message: 'Updating common name…' });
+            const { error } = await supabase
+              .from('plants')
+              .update({ plant_name: suggested })
+              .eq('id', plant.plantsTableId);
+            if (error) throw error;
+            await fetchDetails(true);
+          } catch (e: any) {
+            Alert.alert('Update failed', e?.message ?? 'Could not update common name.');
+          } finally {
+            setOverlay({ visible: false, message: '' });
+            setModals((m: any) => ({ ...m, confirmName: { open: false, suggested: null } }));
+          }
+        }}
+      />
       <LocationModal
         open={modals.location}
         value={drafts.location}
@@ -465,7 +651,6 @@ export default function PlantDetailScreen() {
         onCancel={() => setModals((m) => ({ ...m, location: false }))}
         onSave={saveLocation}
       />
-
       <SoilModal
         open={modals.soil}
         rows={drafts.soilRows}
@@ -473,7 +658,6 @@ export default function PlantDetailScreen() {
         onCancel={() => setModals((m) => ({ ...m, soil: false }))}
         onSave={saveSoil}
       />
-
       <PotDetailsModal
         open={modals.pot}
         mode={modals.potMode}
@@ -501,4 +685,21 @@ const styles = StyleSheet.create({
   headerImage: { width: '100%', height: '100%' },
   headerSkeleton: { width: '100%', height: '100%' },
   loadingRow: { paddingVertical: 24, alignItems: 'center' },
+
+  overlayBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.35)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  overlayCard: {
+    minWidth: 220,
+    paddingVertical: 18,
+    paddingHorizontal: 20,
+    borderRadius: 14,
+    backgroundColor: '#fff',
+    borderWidth: StyleSheet.hairlineWidth,
+    alignItems: 'center',
+  },
+  overlayBlocker: { position: 'absolute', inset: 0 },
 });
