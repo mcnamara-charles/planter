@@ -474,7 +474,7 @@ export default function PlantDetailScreen() {
                   onWater={() => setModals((m) => ({ ...m, water: true }))}   // <— opens WaterModal
                   onFertilize={() => {}}
                   onPrune={() => {}}
-                  onObserve={() => {}}
+                  onObserve={() => (nav as any).navigate('Observe', { id })}
                 />
               </Section>
 
