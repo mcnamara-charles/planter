@@ -88,6 +88,15 @@ export default function PlantsScreen() {
       if (error) throw error;
       const rows = (data ?? []) as unknown as UserPlantJoined[];
 
+      // Sort alphabetically by species scientific name (plants.plant_scientific_name)
+      rows.sort((a, b) => {
+        const an = (a.plants?.plant_scientific_name || '').toLowerCase();
+        const bn = (b.plants?.plant_scientific_name || '').toLowerCase();
+        if (an < bn) return -1;
+        if (an > bn) return 1;
+        return 0;
+      });
+
       // Collect signing work
       type PhotoToSign = { bucket: string; path: string };
       const toSign: PhotoToSign[] = [];

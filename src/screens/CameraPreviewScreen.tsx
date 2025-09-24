@@ -1,6 +1,6 @@
 // screens/CameraPreviewScreen.tsx
 import React, { useMemo, useState } from 'react';
-import { View, StyleSheet, TouchableOpacity, Modal, ActivityIndicator, Pressable } from 'react-native';
+import { View, StyleSheet, TouchableOpacity, Modal, ActivityIndicator, Pressable, ScrollView } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { Image } from 'expo-image';
 import TopBar from '@/components/TopBar';
@@ -16,14 +16,14 @@ export default function CameraPreviewScreen() {
   const route = useRoute();
   const { uri } = (route.params as any as Params) || { uri: '' };
 
-  const { loading, data, candidatesTop3, error, identify } = useIdentifier();
+  const { loading, data, candidatesTop3, error, identify, networkLog } = useIdentifier();
 
   const [modalOpen, setModalOpen] = useState(false);
-  const [currIdx, setCurrIdx] = useState(0); // which of the top 3 we’re viewing
+  const [currIdx, setCurrIdx] = useState(0);
   const [overlay, setOverlay] = useState<{ visible: boolean; message: string }>({ visible: false, message: '' });
+  const [showTech, setShowTech] = useState(false); // NEW: toggle for diagnostics
 
   const current = useMemo(() => {
-    // prefer the candidates list; fall back to top-1 "data" if needed
     return candidatesTop3[currIdx] || candidatesTop3[0] || data || null;
   }, [candidatesTop3, currIdx, data]);
 
@@ -40,12 +40,12 @@ export default function CameraPreviewScreen() {
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.background }}>
       <TopBar
-            title={"Identify Plant Species"}
-            isFavorite={false}
-            onBack={() => (nav as any).goBack()}
-            onToggleFavorite={() => {}}
-            onToggleMenu={() => {}}
-            hideActions
+        title={"Identify Plant Species"}
+        isFavorite={false}
+        onBack={() => (nav as any).goBack()}
+        onToggleFavorite={() => {}}
+        onToggleMenu={() => {}}
+        hideActions
       />
 
       <View style={{ flex: 1 }}>
@@ -72,21 +72,26 @@ export default function CameraPreviewScreen() {
             if (!uri) return;
             try {
               setOverlay({ visible: true, message: 'Identifying…' });
-              const top3 = await identify(uri); // defaults organs → ['leaf']
+              const top3 = await identify(uri, {
+                // optional tunables if you want:
+                // timeoutMsPerAttempt: 20000,
+                // maxAttempts: 3,
+              });
               setOverlay({ visible: false, message: '' });
               if (top3 && top3.length) {
-                // Navigate to the new identification result screen
                 (nav as any).navigate('PlantIdentificationResult', {
                   candidates: top3,
                   currentIndex: 0,
                   imageUri: uri
                 });
               } else {
-                setModalOpen(true); // open anyway to show "no result" error state
+                setShowTech(false);
+                setModalOpen(true);
               }
             } catch {
               setOverlay({ visible: false, message: '' });
-              setModalOpen(true); // open to show error
+              setShowTech(false);
+              setModalOpen(true);
             }
           }}
         >
@@ -107,7 +112,7 @@ export default function CameraPreviewScreen() {
         </View>
       </Modal>
 
-      {/* Result modal w/ top-3 pagination */}
+      {/* Result / error modal */}
       <Modal visible={modalOpen} transparent animationType="fade" onRequestClose={() => setModalOpen(false)}>
         <View style={styles.modalBackdrop}>
           <View style={[styles.modalCard, { backgroundColor: theme.colors.card, borderColor: theme.colors.border }]}>
@@ -116,7 +121,57 @@ export default function CameraPreviewScreen() {
             </ThemedText>
 
             {error ? (
-              <ThemedText style={{ color: '#d11a2a' }}>{error}</ThemedText>
+              <>
+                <ThemedText style={{ color: '#d11a2a' }}>{error}</ThemedText>
+                <View style={{ height: 10 }} />
+                <TouchableOpacity
+                  onPress={() => setShowTech((v) => !v)}
+                  style={[styles.modalBtn, { borderColor: theme.colors.border }]}
+                >
+                  <ThemedText style={{ fontWeight: '800' }}>
+                    {showTech ? 'Hide technical details' : 'Show technical details'}
+                  </ThemedText>
+                </TouchableOpacity>
+
+                {showTech ? (
+                  <View style={{ maxHeight: 260, marginTop: 10 }}>
+                    <ScrollView style={{ borderWidth: StyleSheet.hairlineWidth, borderColor: theme.colors.border, borderRadius: 8, padding: 8 }}>
+                      {networkLog.length === 0 ? (
+                        <ThemedText style={{ opacity: 0.7 }}>No diagnostics available.</ThemedText>
+                      ) : (
+                        networkLog.map((a, idx) => (
+                          <View key={`${a.attempt}-${idx}`} style={{ marginBottom: 10 }}>
+                            <ThemedText style={{ fontWeight: '700' }}>{`Attempt ${a.attempt} (${a.label})`}</ThemedText>
+                            <ThemedText style={{ fontFamily: 'monospace', fontSize: 12 }}>
+                              {`status: ${a.status ?? '-'} | ok: ${a.ok ? 'true' : 'false'} | ${a.durationMs}ms`}
+                            </ThemedText>
+                            {a.cfId ? (
+                              <ThemedText style={{ fontFamily: 'monospace', fontSize: 12 }}>
+                                {`cf-id: ${a.cfId}`}
+                              </ThemedText>
+                            ) : null}
+                            {a.contentType ? (
+                              <ThemedText style={{ fontFamily: 'monospace', fontSize: 12 }}>
+                                {`content-type: ${a.contentType}`}
+                              </ThemedText>
+                            ) : null}
+                            {a.error ? (
+                              <ThemedText style={{ fontFamily: 'monospace', fontSize: 12 }}>
+                                {`error: ${a.error}`}
+                              </ThemedText>
+                            ) : null}
+                            {a.bodyPreview ? (
+                              <ThemedText style={{ fontFamily: 'monospace', fontSize: 12, opacity: 0.8 }}>
+                                {`body: ${a.bodyPreview}`}
+                              </ThemedText>
+                            ) : null}
+                          </View>
+                        ))
+                      )}
+                    </ScrollView>
+                  </View>
+                ) : null}
+              </>
             ) : current ? (
               <>
                 <ThemedText style={{ fontWeight: '700', fontSize: 16 }}>{titleLine}</ThemedText>
@@ -176,6 +231,7 @@ export default function CameraPreviewScreen() {
     </View>
   );
 }
+
 
 const styles = StyleSheet.create({
   actionsRow: {

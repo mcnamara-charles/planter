@@ -21,7 +21,7 @@ export default function SignUpScreen() {
   const onSignUp = async () => {
     try {
       setSubmitting(true);
-      await signUpWithEmail(email.trim(), password);
+      await signUpWithEmail(email.trim(), password, fullName.trim() || undefined);
       (nav as any).navigate('VerifyEmail', { email: email.trim() });
     } catch (e: any) {
       Alert.alert('Sign up failed', e?.message ?? 'Unknown error');

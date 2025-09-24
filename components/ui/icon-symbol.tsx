@@ -45,6 +45,13 @@ const MAPPING: Record<string, IconDescriptor> = {
   ellipsis: { lib: 'material', name: 'more-horiz' },
   'person.circle': { lib: 'material', name: 'person' },
   plus: { lib: 'material', name: 'add' },
+  // Account & settings icons
+  gearshape: { lib: 'material', name: 'settings' },
+  bell: { lib: 'material', name: 'notifications' },
+  lock: { lib: 'material', name: 'lock' },
+  'questionmark.circle': { lib: 'material', name: 'help-outline' },
+  'rectangle.portrait.and.arrow.right': { lib: 'material', name: 'logout' },
+  'doc.on.doc': { lib: 'material', name: 'content-copy' },
 
   // ---- PlantTimeline event icons (Material) ----
   drop: { lib: 'material', name: 'opacity' }, // water droplet

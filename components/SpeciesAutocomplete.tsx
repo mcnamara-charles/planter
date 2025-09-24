@@ -211,7 +211,7 @@ export function SpeciesAutocomplete(props: Props) {
       setSearching(true);
       const shortCap = q.length === 2 ? Math.min(15, maxResults) : maxResults;
 
-      const rpc = supabase.rpc('search_species_prefix' /* or 'search_species_prefix' */, {
+      const rpc = supabase.rpc('search_species_scientific_prefix_cs' /* or 'search_species_prefix' */, {
         q,
         max_results: shortCap,
       });

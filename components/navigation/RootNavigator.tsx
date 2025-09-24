@@ -12,6 +12,7 @@ import { IconSymbol } from '@/components/ui/icon-symbol';
 import HomeScreen from '@/src/screens/HomeScreen';
 import PlantsScreen from '@/src/screens/PlantsScreen';
 import AccountScreen from '@/src/screens/AccountScreen';
+import ProfileScreen from '@/src/screens/ProfileScreen';
 import DiscoverScreen from '@/src/screens/DiscoverScreen';
 import SignInScreen from '@/src/screens/SignInScreen';
 import SignUpScreen from '@/src/screens/SignUpScreen';
@@ -21,6 +22,7 @@ import CameraScreen from '@/src/screens/CameraScreen';
 import CameraPreviewScreen from '@/src/screens/CameraPreviewScreen';
 import PlantDetailScreen from '../../src/screens/PlantDetailScreen';
 import PlantIdentificationResultScreen from '../../src/screens/PlantIdentificationResultScreen';
+import EditProfileScreen from '@/src/screens/EditProfileScreen';
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -204,6 +206,8 @@ export default function RootNavigator() {
             <Stack.Screen name="PlantIdentificationResult" component={PlantIdentificationResultScreen as any} />
             <Stack.Screen name="AddPlant" component={AddPlantScreen as any} />
             <Stack.Screen name="PlantDetail" component={PlantDetailScreen as any} />
+            <Stack.Screen name="Profile" component={ProfileScreen as any} />
+            <Stack.Screen name="EditProfile" component={EditProfileScreen as any} />
           </>
         )}
       </Stack.Navigator>
