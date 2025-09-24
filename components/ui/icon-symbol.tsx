@@ -44,6 +44,7 @@ const MAPPING: Record<string, IconDescriptor> = {
   'ellipsis.vertical': { lib: 'material', name: 'more-vert' },
   ellipsis: { lib: 'material', name: 'more-horiz' },
   'person.circle': { lib: 'material', name: 'person' },
+  plus: { lib: 'material', name: 'add' },
 
   // ---- PlantTimeline event icons (Material) ----
   drop: { lib: 'material', name: 'opacity' }, // water droplet

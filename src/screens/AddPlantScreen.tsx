@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useMemo } from 'react';
 import { Alert, StyleSheet, TextInput, TouchableOpacity, View, ScrollView, ActivityIndicator, Keyboard, KeyboardAvoidingView, Platform } from 'react-native';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
@@ -23,6 +23,16 @@ export default function AddPlantScreen() {
   const params = (route.params as any) || {};
   const { user } = useAuth();
 
+  // Handle identification parameters
+  const identificationData = useMemo(() => {
+    return params.plantId ? {
+      plantId: params.plantId,
+      identificationPhoto: params.identificationPhoto,
+      scientificName: params.scientificName,
+      commonName: params.commonName,
+    } : null;
+  }, [params.plantId, params.identificationPhoto, params.scientificName, params.commonName]);
+
   // Species selection state
   const [speciesId, setSpeciesId] = useState<string | null>(null);
   const [speciesCommon, setSpeciesCommon] = useState<string>('');        // <-- COMMON name
@@ -45,6 +55,7 @@ export default function AddPlantScreen() {
   const initialPayloadRef = useRef<any | null>(null);
   const [hasChanges, setHasChanges] = useState(false);
   const [androidOffset, setAndroidOffset] = useState(0);
+  const [identificationDataProcessed, setIdentificationDataProcessed] = useState(false);
 
   const KEYBOARD_OFFSET = Platform.OS === 'ios' ? 88 : androidOffset;
 
@@ -89,6 +100,28 @@ export default function AddPlantScreen() {
     const hideSub = Keyboard.addListener('keyboardDidHide', () => setAndroidOffset(0));
     return () => { showSub.remove(); hideSub.remove(); };
   }, []);
+
+  // Handle identification data from plant identification screen
+  useEffect(() => {
+    if (identificationData && !isEdit && !identificationDataProcessed) {
+      // Set the species ID and names
+      setSpeciesId(identificationData.plantId);
+      setSpeciesCommon(identificationData.commonName || '');
+      setSpeciesScientific(identificationData.scientificName || '');
+      
+      // Set the identification photo
+      if (identificationData.identificationPhoto) {
+        setPhoto({
+          uri: identificationData.identificationPhoto,
+          fileName: 'identification_photo.jpg',
+          type: 'image/jpeg',
+        });
+      }
+      
+      // Mark as processed to prevent re-running
+      setIdentificationDataProcessed(true);
+    }
+  }, [identificationData, isEdit, identificationDataProcessed]);
 
   // Prefill when editing
   useEffect(() => {
@@ -389,7 +422,13 @@ export default function AddPlantScreen() {
         if (setDefaultErr) throw setDefaultErr;
       }
 
-      (nav as any).goBack();
+      if (isEdit) {
+        // For edits, go back to the previous screen
+        (nav as any).goBack();
+      } else {
+        // For new plants, navigate to the plant detail screen
+        (nav as any).navigate('PlantDetail', { id: currentPlantId });
+      }
     } catch (e: any) {
       Alert.alert('Failed to save', e?.message ?? 'Unknown error');
     } finally {

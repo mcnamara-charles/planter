@@ -1,9 +1,10 @@
-import React from 'react';
+import React, { useCallback, useRef } from 'react';
 import { NavigationContainer, DarkTheme, DefaultTheme } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { View, Pressable, StyleSheet, Alert, Platform } from 'react-native';
+import { View, Pressable, StyleSheet, Alert, Platform, BackHandler, ToastAndroid } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useFocusEffect, useRoute, getFocusedRouteNameFromRoute } from '@react-navigation/native';
 
 import { useTheme } from '@/context/themeContext';
 import { useAuth } from '@/context/AuthContext';
@@ -19,6 +20,7 @@ import AddPlantScreen from '@/src/screens/AddPlantScreen';
 import CameraScreen from '@/src/screens/CameraScreen';
 import CameraPreviewScreen from '@/src/screens/CameraPreviewScreen';
 import PlantDetailScreen from '../../src/screens/PlantDetailScreen';
+import PlantIdentificationResultScreen from '../../src/screens/PlantIdentificationResultScreen';
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -51,6 +53,37 @@ function CenterIdentifyButton({ onPress }: { onPress: () => void }) {
 
 function MainTabs({ navigation }: any) {
   const { theme } = useTheme();
+
+  // Figure out which tab inside this Tab.Navigator is focused
+  const route = useRoute();
+  const focusedTab = getFocusedRouteNameFromRoute(route) ?? 'Home';
+  const lastBackTs = useRef(0);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (Platform.OS !== 'android') return;
+
+      const onBackPress = () => {
+        
+        if (focusedTab !== 'Home') {
+          return false; // don't intercept
+        }
+        // We're on Home: require double press to exit
+        const now = Date.now();
+        if (now - lastBackTs.current < 1500) {
+          // Allow default behavior (exit)
+          return false;
+        }
+
+        lastBackTs.current = now;
+        ToastAndroid.show('Press back again to exit', ToastAndroid.SHORT);
+        return true; // we handled the first press
+      };
+
+      const sub = BackHandler.addEventListener('hardwareBackPress', onBackPress);
+      return () => sub.remove();
+    }, [focusedTab])
+  );
 
   return (
     <Tab.Navigator
@@ -168,6 +201,7 @@ export default function RootNavigator() {
             <Stack.Screen name="MainTabs" component={MainTabs} />
             <Stack.Screen name="Camera" component={CameraScreen as any} />
             <Stack.Screen name="CameraPreview" component={CameraPreviewScreen as any} />
+            <Stack.Screen name="PlantIdentificationResult" component={PlantIdentificationResultScreen as any} />
             <Stack.Screen name="AddPlant" component={AddPlantScreen as any} />
             <Stack.Screen name="PlantDetail" component={PlantDetailScreen as any} />
           </>

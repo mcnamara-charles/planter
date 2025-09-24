@@ -22,6 +22,7 @@ export default function EnvironmentSection({
   potDiameterIn,
   drainageSystem,
   soilMix,
+  soilDescription,
   onAddPotDetails,
   onRepot,
   onMove,
@@ -33,11 +34,14 @@ export default function EnvironmentSection({
   potDiameterIn?: number | null;
   drainageSystem?: string | null;
   soilMix?: Record<string, number> | null;
+  soilDescription?: string | null;
   onAddPotDetails: () => void;
   onRepot: () => void;
   onMove: () => void;
   SoilMixSlot: React.ReactNode;
 }) {
+  const { theme } = useTheme();
+  
   return (
     <View style={{ gap: 18 }}>
       {/* Location */}
@@ -77,6 +81,11 @@ export default function EnvironmentSection({
       {/* Soil */}
       <View style={{ gap: 8 }}>
         <ThemedText style={{ fontWeight: '800' }}>Soil mix</ThemedText>
+        {!!soilDescription && (
+          <ThemedText style={{ color: theme.colors.mutedText, marginBottom: 8 }}>
+            {soilDescription}
+          </ThemedText>
+        )}
         <GridPanel center padding={40}>{SoilMixSlot}</GridPanel>
       </View>
     </View>

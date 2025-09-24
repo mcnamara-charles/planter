@@ -30,6 +30,7 @@ export default function CareSection({
   onFertilize,
   onPrune,
   onObserve,
+  showActionButtons = true, // <-- new prop to control action buttons
 }: {
   isOpen: boolean;
   plantsTableId: string | null;
@@ -43,6 +44,7 @@ export default function CareSection({
   onFertilize?: () => void;  // <-- new
   onPrune?: () => void;      // <-- new
   onObserve?: () => void;    // <-- new
+  showActionButtons?: boolean; // <-- new prop
 }) {
   const { theme } = useTheme();
   const [loading, setLoading] = useState(false);
@@ -137,11 +139,15 @@ export default function CareSection({
           onPress={onGenerate}
         />
 
-        {/* Re-added action pills, same styling as before */}
-        <ButtonPill label="Water"     variant="solid" color="primary" onPress={() => onWater?.()} />
-        <ButtonPill label="Fertilize" variant="solid" color="primary" onPress={() => onFertilize?.()} />
-        <ButtonPill label="Prune"     variant="solid" color="primary" onPress={() => onPrune?.()} />
-        <ButtonPill label="Observe"   variant="solid" color="primary" onPress={() => onObserve?.()} />
+        {/* Action pills - only show if showActionButtons is true */}
+        {showActionButtons && (
+          <>
+            <ButtonPill label="Water"     variant="solid" color="primary" onPress={() => onWater?.()} />
+            <ButtonPill label="Fertilize" variant="solid" color="primary" onPress={() => onFertilize?.()} />
+            <ButtonPill label="Prune"     variant="solid" color="primary" onPress={() => onPrune?.()} />
+            <ButtonPill label="Observe"   variant="solid" color="primary" onPress={() => onObserve?.()} />
+          </>
+        )}
       </View>
 
       {/* Loading skeletons */}

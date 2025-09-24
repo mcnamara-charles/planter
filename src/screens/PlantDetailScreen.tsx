@@ -66,6 +66,7 @@ export default function PlantDetailScreen() {
     plantsTableId: null as string | null,
     pot: { type: '', heightIn: null as number | null, diameterIn: null as number | null, drainage: '' } as PotShape,
     soilMix: null as Record<string, number> | null,
+    soilDescription: null as string | null,
     propagationMethods: [] as { method: string; difficulty?: string | null; description?: string | null }[],
   });
 
@@ -121,9 +122,9 @@ export default function PlantDetailScreen() {
         if (modals.soil) { setModals((m) => ({ ...m, soil: false })); return true; }
         if (modals.pot) { setModals((m) => ({ ...m, pot: false })); return true; }
         if ((modals as any).confirmName?.open) { setModals((m: any) => ({ ...m, confirmName: { open: false, suggested: null } })); return true; }
-        // Navigate back if possible; otherwise allow default behavior
-        if ((nav as any).canGoBack && (nav as any).canGoBack()) { (nav as any).goBack(); return true; }
-        return false;
+        // Always navigate to My Plants page
+        (nav as any).navigate('plants');
+        return true;
       };
       const sub = BackHandler.addEventListener('hardwareBackPress', onBack);
       return () => sub.remove();
@@ -173,7 +174,7 @@ export default function PlantDetailScreen() {
       if (up.plants_table_id) {
         const { data } = await supabase
           .from('plants')
-          .select('plant_name, plant_scientific_name, description, availability, rarity, propagation_methods_json')
+          .select('plant_name, plant_scientific_name, description, availability, rarity, propagation_methods_json, soil_description')
           .eq('id', up.plants_table_id)
           .maybeSingle();
         plantRow = data;
@@ -203,6 +204,7 @@ export default function PlantDetailScreen() {
           drainage: up.drainage_system ?? '',
         },
         soilMix: (up as any).soil_mix ?? null,
+        soilDescription: (plantRow as any)?.soil_description ?? null,
         propagationMethods: ((plantRow as any)?.propagation_methods_json ?? []) as any[],
       });
     } catch (e: any) {
@@ -342,7 +344,7 @@ export default function PlantDetailScreen() {
       <TopBar
         title={plant.displayName || 'Plant'}
         isFavorite={plant.isFavorite}
-        onBack={() => (nav as any).goBack()}
+        onBack={() => (nav as any).navigate('MainTabs')}
         onToggleFavorite={toggleFavorite}
         onToggleMenu={() => setUi((u) => ({ ...u, menuOpen: !u.menuOpen }))}
       />
@@ -364,7 +366,7 @@ export default function PlantDetailScreen() {
                   try {
                     const { error: delErr } = await supabase.from('user_plants').delete().eq('id', id);
                     if (delErr) throw delErr;
-                    (nav as any).goBack();
+                    (nav as any).navigate('MainTabs');
                   } catch (e: any) {
                     Alert.alert('Delete failed', e?.message ?? 'Unknown error');
                   }
@@ -488,6 +490,7 @@ export default function PlantDetailScreen() {
                   potDiameterIn={plant.pot.diameterIn}
                   drainageSystem={plant.pot.drainage}
                   soilMix={plant.soilMix}
+                  soilDescription={plant.soilDescription}
                   onAddPotDetails={() => {
                     setModals((m) => ({ ...m, pot: true, potMode: 'add' }));
                     setPotDraft(toPotDraft(plant.pot));
