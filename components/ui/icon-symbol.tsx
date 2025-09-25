@@ -59,6 +59,7 @@ const MAPPING: Record<string, IconDescriptor> = {
   location: { lib: 'material', name: 'place' }, // location pin
   scissors: { lib: 'material', name: 'content-cut' }, // scissors
   clock: { lib: 'material', name: 'schedule' }, // clock/time
+  eye: { lib: 'material', name: 'visibility' }, // eye/observe
 
   // ---- Entypo addition ----
   // Use this from your app as <IconSymbol name="cycle" />

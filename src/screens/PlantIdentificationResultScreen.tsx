@@ -35,6 +35,57 @@ const UA_HEADERS: Record<string, string> = {
     'Accept': 'application/json',
   };
   
+  // Same keys the hook emits:
+type StageKey =
+| 'db_read'
+| 'profile'
+| 'light_water'
+| 'care_temp_humidity'
+| 'care_fertilizer'
+| 'care_pruning'
+| 'soil_description'
+| 'propagation'
+| 'db_write'
+| 'done';
+
+type ProgressEvent = {
+key: StageKey;
+label: string;
+status: 'pending' | 'running' | 'success' | 'error';
+error?: string;
+};
+
+const STAGE_ORDER: StageKey[] = [
+'db_read',
+'profile',
+'light_water',
+'care_temp_humidity',
+'care_fertilizer',
+'care_pruning',
+'soil_description',
+'propagation',
+'db_write',
+'done',
+];
+
+const calcPercent = (k: StageKey) => {
+  const i = Math.max(0, STAGE_ORDER.indexOf(k));
+  const total = STAGE_ORDER.length - 1; // treat "done" as 100%
+  return Math.round((i / total) * 100);
+};
+
+const STAGE_LABELS: Record<StageKey, string> = {
+db_read: 'Reading plant record',
+profile: 'Building species profile',
+light_water: 'Rendering light & water',
+care_temp_humidity: 'Generating temp & humidity',
+care_fertilizer: 'Generating fertilizer plan',
+care_pruning: 'Generating pruning guidance',
+soil_description: 'Generating soil & mix',
+propagation: 'Generating propagation',
+db_write: 'Saving updates',
+done: 'Finished',
+};
 
 type RouteParams = { 
   candidates: IdentifyResult[];
@@ -215,13 +266,18 @@ export default function PlantIdentificationResultScreen() {
     refreshing: false,
     genLoading: false,
   });
-  const [overlay, setOverlay] = useState<{ visible: boolean; message: string }>({ visible: false, message: '' });
+  const [overlay, setOverlay] = useState<{
+    visible: boolean;
+    message: string;
+    percent?: number;     // 0–100
+    sublabel?: string;    // e.g., current stage label
+  }>({ visible: false, message: '' });
 
   const [status, setStatus] = useState({ loading: true, error: null as string | null });
   const [currentIndex, setCurrentIndex] = useState(initialIndex);
 
   const [plant, setPlant] = useState({
-    headerUrl: imageUri,
+    headerUrl: null as string | null,
     displayName: '',
     commonName: '',
     scientific: '',
@@ -258,6 +314,10 @@ export default function PlantIdentificationResultScreen() {
   const rarityLabel = useMemo(() => labelRarity(plant.rarity), [plant.rarity]);
   const availabilityLabel = useMemo(() => labelAvailability(plant.availability), [plant.availability]);
 
+  const showOverlay = (message: string, percent?: number, sublabel?: string) =>
+    setOverlay({ visible: true, message, percent, sublabel });
+  const hideOverlay = () => setOverlay({ visible: false, message: '', percent: undefined, sublabel: undefined });
+
   // Sort propagation methods by difficulty for display
   const sortedPropagation = useMemo(() => {
     const order: Record<string, number> = {
@@ -293,6 +353,8 @@ export default function PlantIdentificationResultScreen() {
       return () => sub.remove();
     }, [overlay.visible, modals.water, (modals as any).confirmName?.open])
   );
+
+  
 
   const ensurePrimaryMainImage = useCallback(async (plantId: string, list: PlantImage[]) => {
     try {
@@ -347,7 +409,7 @@ export default function PlantIdentificationResultScreen() {
       if (plantData) {
         setPlant((p) => ({
           ...p,
-          headerUrl: p.headerUrl || plantData.plant_main_image || imageUri,
+          headerUrl: plantData.plant_main_image || null,
           displayName: plantData.plant_name || currentCandidate.commonNames?.[0] || 'Identified Plant',
           commonName: plantData.plant_name || '',
           scientific: plantData.plant_scientific_name || currentCandidate.scientificName,
@@ -362,7 +424,7 @@ export default function PlantIdentificationResultScreen() {
       } else {
         setPlant((p) => ({
           ...p,
-          headerUrl: p.headerUrl || imageUri,
+          headerUrl: null,
           displayName: currentCandidate.commonNames?.[0] || 'Identified Plant',
           commonName: currentCandidate.commonNames?.[0] || '',
           scientific: currentCandidate.scientificName,
@@ -384,9 +446,10 @@ export default function PlantIdentificationResultScreen() {
 
   useEffect(() => {
     if (currentCandidate) {
-      // Clear photos immediately when candidate changes
+      // Clear photos and header image immediately when candidate changes
       setPhotos([]);
       setSelectedPhotoUrl(null);
+      setPlant(prev => ({ ...prev, headerUrl: null })); // Clear header image
       fetchPlantDetails(currentCandidate.scientificName);
     }
   }, [currentCandidate, fetchPlantDetails]);
@@ -401,10 +464,6 @@ export default function PlantIdentificationResultScreen() {
 
   const isRemoteHeader = !!plant.headerUrl;
   const showHeaderSkeleton = isRemoteHeader && !ui.heroLoaded;
-
-  // ===== Helpers =====
-  const showOverlay = (message: string) => setOverlay({ visible: true, message });
-  const hideOverlay = () => setOverlay({ visible: false, message: '' });
 
   const maybeApplySuggestedCommonName = useCallback(async (suggested?: string | null) => {
     if (!suggested || !suggested.trim() || !plant.plantsTableId) return;
@@ -568,6 +627,26 @@ export default function PlantIdentificationResultScreen() {
     });
   }, [plant.plantsTableId, imageUri, currentCandidate, plant.commonName, nav]);
 
+  const handleCareProgress = useCallback((evt: ProgressEvent) => {
+    const label = STAGE_LABELS[evt.key] ?? evt.label ?? 'Working…';
+    const percent = calcPercent(evt.key);
+
+    if (evt.status === 'error') {
+      hideOverlay();
+      Alert.alert('Generation failed', evt.error || 'Please try again.');
+      return;
+    }
+
+    showOverlay('Generating care…', percent, label);
+
+    if (evt.key === 'done' && evt.status === 'success') {
+      // optional: refresh plant details after save
+      fetchPlantDetails(currentCandidate.scientificName);
+      setTimeout(hideOverlay, 400);
+    }
+  }, [currentCandidate.scientificName, fetchPlantDetails]);
+
+
   // ===== Render =====
   return (
     <View style={{ flex: 1 }}>
@@ -625,6 +704,8 @@ export default function PlantIdentificationResultScreen() {
         headerBackgroundColor={{ light: '#E5F4EF', dark: '#12231F' }}
         refreshing={ui.refreshing}
         onRefresh={onRefresh}
+        enableLightbox={photos.length > 0}
+        lightboxImages={photos.map(p => ({ uri: p.source_url, id: p.id?.toString() }))}
         headerImage={
           plant.headerUrl ? (
             <Image
@@ -742,22 +823,22 @@ export default function PlantIdentificationResultScreen() {
 
             <View style={{ marginTop: 12 }}>
               <Section title="Care" open={openSection === 'care'} onToggle={() => toggle('care')}>
-                <CareSection
-                  isOpen={openSection === 'care'}
-                  plantsTableId={plant.plantsTableId}
-                  commonName={plant.commonName}
-                  displayName={plant.displayName}
-                  scientificName={plant.scientific}
-                  showOverlay={(msg) => setOverlay({ visible: true, message: msg })}
-                  hideOverlay={() => setOverlay({ visible: false, message: '' })}
-                  onRefetch={() => fetchPlantDetails(currentCandidate.scientificName)}
-                  onWater={() => {}}
-                  onFertilize={() => {}}
-                  onPrune={() => {}}
-                  onObserve={() => {}}
-                  showActionButtons={false}
-                />
-                
+              <CareSection
+                isOpen={openSection === 'care'}
+                plantsTableId={plant.plantsTableId}
+                commonName={plant.commonName}
+                displayName={plant.displayName}
+                scientificName={plant.scientific}
+                showOverlay={(msg) => setOverlay({ visible: true, message: msg })}
+                hideOverlay={() => setOverlay({ visible: false, message: '' })}
+                onRefetch={() => fetchPlantDetails(currentCandidate.scientificName)}
+                onWater={() => {}}
+                onFertilize={() => {}}
+                onPrune={() => {}}
+                onObserve={() => {}}
+                showActionButtons={false}
+                onCareProgress={handleCareProgress}
+              />
                 {/* Soil Description */}
                 {plant.soilDescription && (
                   <View style={{ marginTop: 16 }}>
@@ -845,7 +926,24 @@ export default function PlantIdentificationResultScreen() {
         <View style={styles.overlayBackdrop}>
           <View style={[styles.overlayCard, { backgroundColor: theme.colors.card, borderColor: theme.colors.border }]}>
             <ActivityIndicator color={theme.colors.text as any} />
-            <ThemedText style={{ marginTop: 12 }}>{overlay.message || 'Working…'}</ThemedText>
+            <ThemedText style={{ marginTop: 12, fontWeight: '700' }}>
+              {overlay.message || 'Working…'}
+            </ThemedText>
+            {!!overlay.sublabel && (
+              <ThemedText style={{ marginTop: 4, color: theme.colors.mutedText }}>
+                {overlay.sublabel}
+              </ThemedText>
+            )}
+            {typeof overlay.percent === 'number' && (
+              <>
+                <View style={styles.progressWrap}>
+                  <View style={[styles.progressBar, { width: `${overlay.percent}%`, backgroundColor: theme.colors.text }]} />
+                </View>
+                <ThemedText style={{ marginTop: 6, opacity: 0.7 }}>
+                  {overlay.percent}%
+                </ThemedText>
+              </>
+            )}
           </View>
           <Pressable style={styles.overlayBlocker} />
         </View>
@@ -1040,5 +1138,17 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontSize: 16,
     fontWeight: '600',
+  },
+  progressWrap: {
+    width: 220,
+    height: 8,
+    borderRadius: 8,
+    backgroundColor: 'rgba(0,0,0,0.08)',
+    marginTop: 12,
+    overflow: 'hidden',
+  },
+  progressBar: {
+    height: '100%',
+    borderRadius: 8,
   },
 });

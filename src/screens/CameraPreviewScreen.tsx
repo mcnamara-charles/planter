@@ -52,7 +52,7 @@ export default function CameraPreviewScreen() {
         {!!uri && (
           <Image
             source={{ uri }}
-            contentFit="contain"
+            contentFit="cover"
             style={{ flex: 1, backgroundColor: 'black' }}
           />
         )}

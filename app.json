@@ -19,7 +19,8 @@
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "package": "com.mcnamaracharles.planter"
     },
     "web": {
       "output": "static",
@@ -46,7 +47,11 @@
     },
     "extra": {
       "SUPABASE_URL": "${EXPO_PUBLIC_SUPABASE_URL}",
-      "SUPABASE_ANON_KEY": "${EXPO_PUBLIC_SUPABASE_ANON_KEY}"
+      "SUPABASE_ANON_KEY": "${EXPO_PUBLIC_SUPABASE_ANON_KEY}",
+      "router": {},
+      "eas": {
+        "projectId": "fc39338a-06ca-4426-9189-f4cc032efba0"
+      }
     }
   }
 }

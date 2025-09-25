@@ -59,6 +59,7 @@ export default function AddObserveScreen() {
   const [widthIn, setWidthIn] = useState('');
   const [leafCount, setLeafCount] = useState('');
   const [soilMoisture, setSoilMoisture] = useState('');
+  const [soilMoistureOpen, setSoilMoistureOpen] = useState(false);
   const [depthIn, setDepthIn] = useState('');
   const [isHealthy, setIsHealthy] = useState(true);
   const [damageDesc, setDamageDesc] = useState('');
@@ -230,11 +231,16 @@ export default function AddObserveScreen() {
       />
 
       <KeyboardAvoidingScreen>
-        <ScrollView
-          contentContainerStyle={{ padding: 16, paddingBottom: 28 }}
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'none'}
+        <TouchableOpacity 
+          activeOpacity={1} 
+          onPress={() => setSoilMoistureOpen(false)}
+          style={{ flex: 1 }}
         >
+          <ScrollView
+            contentContainerStyle={{ padding: 16, paddingBottom: 28 }}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'none'}
+          >
           <Section title="Growth">
             <LabeledInput label="Height (in)" value={heightIn} onChangeText={setHeightIn} keyboardType="numeric" placeholder="e.g. 12.5" />
             <LabeledInput label="Width (in)" value={widthIn} onChangeText={setWidthIn} keyboardType="numeric" placeholder="e.g. 7.0" />
@@ -242,7 +248,47 @@ export default function AddObserveScreen() {
           </Section>
 
           <Section title="Medium">
-            <LabeledInput label="Soil moisture" value={soilMoisture} onChangeText={setSoilMoisture} placeholder="e.g. Moist" />
+            <View style={styles.inputGroup}>
+              <ThemedText style={styles.label}>Soil moisture</ThemedText>
+              <View style={{ position: 'relative' }}>
+                <TouchableOpacity
+                  onPress={() => setSoilMoistureOpen((o) => !o)}
+                  activeOpacity={0.8}
+                  style={[
+                    styles.dropdownButton,
+                    { borderColor: theme.colors.border, backgroundColor: theme.colors.input }
+                  ]}
+                >
+                  <ThemedText style={{ color: soilMoisture ? theme.colors.text : theme.colors.mutedText }}>
+                    {soilMoisture || 'Select moisture level'}
+                  </ThemedText>
+                  <View style={styles.dropdownIcon}>
+                    <IconSymbol name={soilMoistureOpen ? 'chevron.up' : 'chevron.down'} size={20} color={theme.colors.mutedText} />
+                  </View>
+                </TouchableOpacity>
+                {soilMoistureOpen && (
+                  <View
+                    style={[
+                      styles.dropdownMenu,
+                      { borderColor: theme.colors.border, backgroundColor: theme.colors.card }
+                    ]}
+                  >
+                    {(['Soggy', 'Moist', 'Slightly Dry', 'Mostly Dry', 'Completely Dry'] as const).map((option) => (
+                      <TouchableOpacity
+                        key={option}
+                        onPress={() => { setSoilMoisture(option); setSoilMoistureOpen(false); }}
+                        style={[
+                          styles.dropdownItem,
+                          { backgroundColor: soilMoisture === option ? theme.colors.input : 'transparent' }
+                        ]}
+                      >
+                        <ThemedText style={styles.dropdownItemText}>{option}</ThemedText>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                )}
+              </View>
+            </View>
             <LabeledInput label="Depth (in)" value={depthIn} onChangeText={setDepthIn} keyboardType="numeric" placeholder="e.g. 2.0" />
           </Section>
 
@@ -304,6 +350,7 @@ export default function AddObserveScreen() {
             <ThemedText style={styles.primaryLabel}>{saving ? 'Saving…' : 'Save observation'}</ThemedText>
           </TouchableOpacity>
         </ScrollView>
+        </TouchableOpacity>
       </KeyboardAvoidingScreen>
       </ThemedView>
     </KeyboardAvoidingView>
@@ -366,6 +413,47 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
   },
   removeBadgeText: { color: '#fff', fontWeight: '700' },
+  inputGroup: { marginBottom: 8 },
+  dropdownButton: {
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 10,
+    paddingLeft: 12,
+    paddingRight: 40,
+    paddingVertical: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  dropdownIcon: {
+    position: 'absolute',
+    right: 8,
+    top: 0,
+    bottom: 0,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  dropdownMenu: {
+    position: 'absolute',
+    top: 46,
+    left: 0,
+    right: 0,
+    zIndex: 100,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 10,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOpacity: 0.12,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 4,
+  },
+  dropdownItem: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  dropdownItemText: {
+    fontWeight: '600',
+  },
 });
 
 

@@ -265,9 +265,9 @@ export function useIdentifier() {
       }
 
       // If we’re here, we did not return successfully.
-      const cfHint = lastNonOk?.cfId ? ` [cf-id: ${lastNonOk.cfId}]` : '';
+      const cfHint = (lastNonOk as any)?.cfId ? ` [cf-id: ${(lastNonOk as any).cfId}]` : '';
       const friendly =
-        (lastNonOk?.text?.trim().startsWith('<') && 'Service is temporarily unavailable (CDN/CloudFront).') ||
+        ((lastNonOk as any)?.text?.trim().startsWith('<') && 'Service is temporarily unavailable (CDN/CloudFront).') ||
         lastError ||
         'Identification failed';
 

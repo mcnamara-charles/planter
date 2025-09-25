@@ -7,6 +7,8 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, RefreshControl, StyleSheet, TouchableOpacity, View, FlatList, type ViewStyle } from 'react-native';
 import { Image } from 'expo-image';
+import ImageLightbox from '@/components/ImageLightbox';
+import { useNavigation } from '@react-navigation/native';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -192,6 +194,19 @@ const EVENT_MAP: Record<string, EventConfig> = {
       return arr;
     },
   },
+  observe: {
+    icon: 'eye',
+    title: () => 'Observed',
+    chips: (e) => {
+      const d = e.event_data || {};
+      const healthy = d.health?.is_healthy;
+      const soil = d.medium?.soil_moisture;
+      const chips: string[] = [];
+      if (healthy !== undefined) chips.push(healthy ? 'Healthy' : 'Sick');
+      if (soil) chips.push(`Soil: ${String(soil)}`);
+      return chips;
+    },
+  },
 };
 
 function getEventConfig(type: string): EventConfig {
@@ -223,20 +238,50 @@ function Chip({ label }: { label: string }) {
   );
 }
 
-function PhotoStrip({ photos }: { photos: { url: string; id: string }[] }) {
+function PhotoStrip({ photos }: { photos: { thumb: string; full: string; id: string }[] }) {
+  const [lightboxOpen, setLightboxOpen] = React.useState(false);
+  const [startIndex, setStartIndex] = React.useState(0);
+
   if (!photos?.length) return null;
+
+  const onPress = (idx: number) => {
+    setStartIndex(idx);
+    setLightboxOpen(true);
+  };
+
   return (
-    <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
-      {photos.slice(0, 3).map((p) => (
-        <Image
-          key={p.id}
-          source={{ uri: p.url }}
-          style={{ width: 84, height: 84, borderRadius: 10 }}
-          contentFit="cover"
-          transition={150}
-        />
-      ))}
-    </View>
+    <>
+      <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
+        {photos.slice(0, 3).map((p, idx) => {
+          const isLastVisible = idx === 2 && photos.length > 3;
+          const remaining = photos.length - 3;
+          return (
+            <TouchableOpacity key={p.id} activeOpacity={0.8} onPress={() => onPress(idx)}>
+              <View style={{ width: 84, height: 84 }}>
+                <Image
+                  source={{ uri: p.thumb }}
+                  style={{ width: 84, height: 84, borderRadius: 10 }}
+                  contentFit="cover"
+                  transition={150}
+                />
+                {isLastVisible ? (
+                  <View style={[StyleSheet.absoluteFillObject, { backgroundColor: 'rgba(0,0,0,0.4)', borderRadius: 10, alignItems: 'center', justifyContent: 'center' }]}>
+                    <ThemedText style={{ color: '#fff', fontWeight: '800' }}>{`+${remaining}`}</ThemedText>
+                  </View>
+                ) : null}
+              </View>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+
+      <ImageLightbox
+        visible={lightboxOpen}
+        images={photos.map((p) => ({ uri: p.full, id: p.id }))}
+        initialIndex={startIndex}
+        onClose={() => setLightboxOpen(false)}
+      />
+    </>
   );
 }
 
@@ -259,8 +304,9 @@ export default function PlantTimeline({
   withinScrollView?: boolean;
 }) {
   const { theme } = useTheme();
+  const nav = useNavigation();
   const [events, setEvents] = useState<TimelineEvent[]>([]);
-  const [photosByEvent, setPhotosByEvent] = useState<Record<string, { url: string; id: string }[]>>({});
+  const [photosByEvent, setPhotosByEvent] = useState<Record<string, { thumb: string; full: string; id: string }[]>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -301,23 +347,28 @@ export default function PlantTimeline({
               .in('id', photoIds);
             if (e3) throw e3;
 
-            const signedByPhotoId: Record<string, string> = {};
+            const signedThumbByPhotoId: Record<string, string> = {};
+            const signedFullByPhotoId: Record<string, string> = {};
             await Promise.all(
               (photos ?? []).map(async (ph) => {
                 const bucket = ph.bucket || 'plant-photos';
-                const { data: signed } = await supabase.storage.from(bucket).createSignedUrl(ph.object_path, 60 * 60, {
-                  transform: { width: 900, quality: 85, resize: 'cover' },
+                const { data: signedThumb } = await supabase.storage.from(bucket).createSignedUrl(ph.object_path, 60 * 60, {
+                  transform: { width: 168, height: 168, quality: 85, resize: 'cover' },
                 });
-                signedByPhotoId[ph.id] = signed?.signedUrl ?? '';
+                // Full-size (no transform) to view original; fallback to a large contain if needed
+                const { data: signedFull } = await supabase.storage.from(bucket).createSignedUrl(ph.object_path, 60 * 60);
+                signedThumbByPhotoId[ph.id] = signedThumb?.signedUrl ?? '';
+                signedFullByPhotoId[ph.id] = signedFull?.signedUrl ?? signedThumb?.signedUrl ?? '';
               })
             );
 
-            const urlMap: Record<string, { url: string; id: string }[]> = {};
+            const urlMap: Record<string, { thumb: string; full: string; id: string }[]> = {};
             for (const link of links) {
-              const url = signedByPhotoId[link.user_plant_photo_id];
-              if (!url) continue;
+              const thumb = signedThumbByPhotoId[link.user_plant_photo_id];
+              const full = signedFullByPhotoId[link.user_plant_photo_id];
+              if (!thumb && !full) continue;
               if (!urlMap[link.timeline_event_id]) urlMap[link.timeline_event_id] = [];
-              urlMap[link.timeline_event_id].push({ url, id: link.user_plant_photo_id });
+              urlMap[link.timeline_event_id].push({ thumb: thumb || full, full: full || thumb, id: link.user_plant_photo_id });
             }
 
             setPhotosByEvent((prev) => ({ ...prev, ...urlMap }));
@@ -391,6 +442,7 @@ export default function PlantTimeline({
     const chips = cfg.chips?.(e) ?? [];
     const title = cfg.title?.(e) ?? humanizeType(e.event_type);
     const photos = photosByEvent[e.id] ?? [];
+    const isObserve = e.event_type === 'observe';
 
     const perTypeCard = cfg.cardStyle?.(theme) ?? {};
     const baseCardStyle: ViewStyle = {
@@ -402,7 +454,7 @@ export default function PlantTimeline({
     const mergedCardStyle = { ...baseCardStyle, ...restPerType } as ViewStyle;
     const UseContainer = cfg.cardStyle ? View : ThemedView;
 
-    return (
+    const cardContent = (
       <UseContainer style={[styles.card, mergedCardStyle, cfg.cardStyle ? styles.cardTintFix : null]}>
         {overlayColor ? (
           <View pointerEvents="none" style={[StyleSheet.absoluteFillObject, { backgroundColor: overlayColor }]} />
@@ -414,7 +466,12 @@ export default function PlantTimeline({
               {title}
             </ThemedText>
           </View>
-          <ThemedText style={[styles.timeLabel, { color: theme.colors.mutedText }]}>{timeOfDay(e.event_time)}</ThemedText>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <ThemedText style={[styles.timeLabel, { color: theme.colors.mutedText }]}>{timeOfDay(e.event_time)}</ThemedText>
+            {isObserve && (
+              <IconSymbol name="chevron.right" size={16} color={theme.colors.mutedText} />
+            )}
+          </View>
         </View>
 
         {e.note ? <ThemedText style={{ opacity: 0.9 }}>{String(e.note)}</ThemedText> : null}
@@ -432,6 +489,25 @@ export default function PlantTimeline({
         <PhotoStrip photos={photos} />
       </UseContainer>
     );
+
+    if (isObserve) {
+      return (
+        <TouchableOpacity
+          onPress={() => {
+            // Navigate to ViewObservation screen with the timeline event ID and plant ID
+            (nav as any).navigate('ViewObservation', { 
+              timelineEventId: e.id, 
+              userPlantId: userPlantId 
+            });
+          }}
+          activeOpacity={0.7}
+        >
+          {cardContent}
+        </TouchableOpacity>
+      );
+    }
+
+    return cardContent;
   };
 
   const renderRowCore = (row: FlatRow) => {

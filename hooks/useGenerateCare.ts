@@ -6,6 +6,10 @@ import { OPENAI_API_KEY } from '@env';
 // ================== Config ==================
 const OPENAI_MODEL = 'gpt-4.1-mini';
 
+// Unit preference
+type UnitPref = 'us' | 'metric';
+const DEFAULT_UNITS: UnitPref = 'us';
+
 // ================== Types ===================
 type Difficulty = 'easy' | 'moderate' | 'challenging' | 'very_challenging';
 type CanonMethod = 'cuttings' | 'division' | 'leaf' | 'offsets' | 'seed' | 'air_layering';
@@ -27,14 +31,47 @@ type Args = {
   scientificName?: string | null; // canonical, do not correct
 };
 
+// Progress reporting
+type StageKey =
+  | 'db_read'
+  | 'profile'
+  | 'light_water'
+  | 'care_temp_humidity'
+  | 'care_fertilizer'
+  | 'care_pruning'
+  | 'soil_description'
+  | 'propagation'
+  | 'db_write'
+  | 'done';
+
+type ProgressStatus = 'pending' | 'running' | 'success' | 'error';
+
+type ProgressEvent = {
+  key: StageKey;
+  label: string;
+  status: ProgressStatus;
+  startedAt?: number;
+  endedAt?: number;
+  error?: string;
+  meta?: Record<string, any>;
+};
+
+type RunOpts = Args & {
+  onProgress?: (evt: ProgressEvent, all: ProgressEvent[]) => void; // optional live updates for parent
+  units?: UnitPref; // default 'us'
+};
+
 // =============== Tiny helpers ===============
 async function withTimeout<T>(p: PromiseLike<T>, ms: number, label = 'operation'): Promise<T> {
   let timer: any;
   const timeout = new Promise<never>((_, rej) => {
     timer = setTimeout(() => rej(new Error(`${label} timed out after ${ms}ms`)), ms);
   });
-  try { return await Promise.race([Promise.resolve(p), timeout]); }
-  finally { clearTimeout(timer); }
+  try {
+    return await Promise.race([Promise.resolve(p), timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 type SBErr = { message: string; code?: string; details?: string; hint?: string } | null;
@@ -48,31 +85,58 @@ function looksLikeJson(s: string) {
 function firstJsonIn(text?: string): any | null {
   if (!text) return null;
   const s = text.trim();
-  if (looksLikeJson(s)) { try { return JSON.parse(s); } catch {} }
+  if (looksLikeJson(s)) {
+    try {
+      return JSON.parse(s);
+    } catch {}
+  }
   const match = s.match(/[{\[][\s\S]*[}\]]/);
-  if (match) { try { return JSON.parse(match[0]); } catch {} }
+  if (match) {
+    try {
+      return JSON.parse(match[0]);
+    } catch {}
+  }
   return null;
 }
 function extractStructured<T = any>(json: any): T | null {
   if (json?.output_parsed) return json.output_parsed as T;
-  if (json?.parsed)        return json.parsed as T;
+  if (json?.parsed) return json.parsed as T;
   const output = Array.isArray(json?.output) ? json.output : [];
   for (const item of output) {
     const content = Array.isArray(item?.content) ? item.content : [];
     for (const c of content) {
       if (c?.parsed) return c.parsed as T;
       if (typeof c?.json === 'object' && c.json) return c.json as T;
-      if (typeof c?.text === 'string') { const fx = firstJsonIn(c.text); if (fx) return fx as T; }
+      if (typeof c?.text === 'string') {
+        const fx = firstJsonIn(c.text);
+        if (fx) return fx as T;
+      }
       if (Array.isArray(c?.annotations)) {
-        for (const a of c.annotations) { if (typeof a?.text === 'string') { const fx = firstJsonIn(a.text); if (fx) return fx as T; } }
+        for (const a of c.annotations) {
+          if (typeof a?.text === 'string') {
+            const fx = firstJsonIn(a.text);
+            if (fx) return fx as T;
+          }
+        }
       }
     }
   }
-  if (typeof json?.output_text === 'string') { const fx = firstJsonIn(json.output_text); if (fx) return fx as T; }
+  if (typeof json?.output_text === 'string') {
+    const fx = firstJsonIn(json.output_text);
+    if (fx) return fx as T;
+  }
   const cmsg = json?.choices?.[0]?.message;
-  if (typeof cmsg?.content === 'string') { const fx = firstJsonIn(cmsg.content); if (fx) return fx as T; }
+  if (typeof cmsg?.content === 'string') {
+    const fx = firstJsonIn(cmsg.content);
+    if (fx) return fx as T;
+  }
   if (Array.isArray(cmsg?.content)) {
-    for (const part of cmsg.content) { if (typeof part?.text === 'string') { const fx = firstJsonIn(part.text); if (fx) return fx as T; } }
+    for (const part of cmsg.content) {
+      if (typeof part?.text === 'string') {
+        const fx = firstJsonIn(part.text);
+        if (fx) return fx as T;
+      }
+    }
   }
   return null;
 }
@@ -109,7 +173,9 @@ async function openAIJson<T>(
     const parsed = extractStructured<T>(body);
     const incomplete = body?.status === 'incomplete' || !!body?.incomplete_details;
     if (parsed && !incomplete) return parsed;
-  } catch (_) { /* fall through */ }
+  } catch (_) {
+    /* fall through */
+  }
 
   // Retry tighter
   try {
@@ -131,7 +197,9 @@ async function openAIJson<T>(
     if (!resp2.ok) throw new Error(body2?.error?.message || `OpenAI error ${resp2.status}`);
     const parsed2 = extractStructured<T>(body2);
     if (parsed2) return parsed2;
-  } catch (_) { /* fall through */ }
+  } catch (_) {
+    /* fall through */
+  }
 
   // Chat fallback
   const chatReq = {
@@ -213,6 +281,153 @@ const SCHEMA_PROPAGATION = {
   required: ['propagation_techniques'],
 } as const;
 
+// ================== Structured profile schema + helpers ==================
+type WindowAspect = 'south' | 'west' | 'east' | 'north';
+type LightClass   = 'direct_sun' | 'high_light' | 'bright_indirect' | 'medium' | 'low';
+type Watering     = 'soak_and_dry' | 'top_inch_dry' | 'evenly_moist' | 'boggy_never';
+
+type Profile = {
+  growth_form: 'succulent-stem' | 'succulent-leaf' | 'cactus' | 'tropical-foliage' | 'woody-shrub' | 'herb';
+  is_succulent: boolean;
+  light_class: LightClass;
+  watering_strategy: Watering;
+  window_best: WindowAspect;
+  window_ok: WindowAspect[];
+  summer_note: string; // short safety note
+};
+
+const SCHEMA_PROFILE = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['growth_form','is_succulent','light_class','watering_strategy','window_best','window_ok','summer_note'],
+  properties: {
+    growth_form: { enum: ['succulent-stem','succulent-leaf','cactus','tropical-foliage','woody-shrub','herb'] },
+    is_succulent: { type: 'boolean' },
+    light_class: { enum: ['direct_sun','high_light','bright_indirect','medium','low'] },
+    watering_strategy: { enum: ['soak_and_dry','top_inch_dry','evenly_moist','boggy_never'] },
+    window_best: { enum: ['south','west','east','north'] },
+    window_ok: { type: 'array', minItems: 0, maxItems: 3, items: { enum: ['south','west','east','north'] } },
+    summer_note: { type: 'string', maxLength: 180 }
+  }
+} as const;
+
+/** Hard rules for known species (deterministic & cached). Add as you go. */
+const HARD_RULES: Record<string, Partial<Profile>> = {
+  'kalanchoe fedtschenkoi': {
+    growth_form: 'succulent-leaf',
+    is_succulent: true,
+    light_class: 'direct_sun',
+    watering_strategy: 'soak_and_dry',
+    window_best: 'south',
+    window_ok: ['west','east'],
+    summer_note: 'In very hot, dry summers, give light afternoon shade to prevent leaf scorch.'
+  },
+  'euphorbia mammillaris': {
+    growth_form: 'succulent-stem',
+    is_succulent: true,
+    light_class: 'direct_sun',
+    watering_strategy: 'soak_and_dry',
+    window_best: 'south',
+    window_ok: ['west','east'],
+    summer_note: 'Acclimate gradually when moving into stronger sun.'
+  }
+};
+
+/** Compose a profile prompt with guardrails that prevent generic clichés. */
+function profileInstructions() {
+  return [
+    'You are classifying horticultural traits for the EXACT species provided.',
+    sharedNameNote,
+    // Guardrails:
+    'If the plant is a succulent (Euphorbia/Kalanchoe/Aloe/Haworthia/Crassula/etc.), prefer light_class=direct_sun or high_light and watering_strategy=soak_and_dry unless the species is explicitly shade-adapted.',
+    'Do NOT use garden-center clichés. Output JSON matching the schema, nothing else.',
+  ].join(' ');
+}
+
+/** Deterministic rendering from the profile (no model prose). */
+function renderLightFromProfile(p: Profile): string {
+  const desc: Record<LightClass,string> = {
+    direct_sun:     'Thrives in bright light with several hours of direct sun daily.',
+    high_light:     'Prefers very bright light and benefits from some direct sun.',
+    bright_indirect:'Prefers bright, indirect light with minimal direct sun.',
+    medium:         'Tolerates medium light but growth will slow and may stretch.',
+    low:            'Tolerates low light poorly; expect sparse, weak growth.'
+  };
+  const windows = `Indoors, a ${p.window_best}-facing window is best${p.window_ok.length ? `; ${p.window_ok.join('/')} are acceptable with slower growth` : ''}.`;
+  return [desc[p.light_class], windows, p.summer_note].filter(Boolean).join(' ');
+}
+
+// Inches-first wording for top_inch_dry
+function renderWaterFromProfile(p: Profile): string {
+  const w: Record<Watering,string> = {
+    soak_and_dry: 'Water deeply, then allow the soil to dry out completely before watering again; reduce frequency in winter.',
+    top_inch_dry: 'Water when the top 1 in (2–3 cm) of soil is dry; empty any saucer to avoid soggy roots.',
+    evenly_moist: 'Keep the soil evenly moist but never waterlogged; ensure free drainage.',
+    boggy_never:  'Keep the medium consistently wet and never allow it to dry; use a container with no standing water.'
+  };
+  return w[p.watering_strategy];
+}
+
+/** Tiny contradiction fixer (paranoia). */
+function fixContradictions(_light: string, water: string) {
+  const saysModerate = /\bmoderate watering\b/i.test(water);
+  const saysDryOut   = /dry out completely/i.test(water);
+  if (saysModerate && saysDryOut) {
+    return water.replace(/\bmoderate watering\b/ig, 'Water deeply, then allow the soil to dry out completely');
+  }
+  return water;
+}
+
+// ========== Unit conversion helpers (°C→°F, cm→in) ==========
+const EN_DASH = /–/g;
+const toF = (c: number) => (c * 9) / 5 + 32;
+const toIn = (cm: number) => cm / 2.54;
+const round1 = (n: number) => Math.round(n * 10) / 10;
+
+function convertTemperaturesToF(s: string): string {
+  if (!s) return s;
+  let t = s.replace(EN_DASH, '-');
+
+  // ranges like "10-15 °C" or "10 to 15C"
+  t = t.replace(
+    /(?<!°)\b(-?\d+(?:\.\d+)?)\s*(?:to|-)\s*(-?\d+(?:\.\d+)?)\s*°?\s*C(?:elsius)?\b/gi,
+    (_, a, b) => `${round1(toF(parseFloat(a)))}–${round1(toF(parseFloat(b)))} °F`
+  );
+  // singles like "18°C" or "18 C"
+  t = t.replace(
+    /(?<!°)\b(-?\d+(?:\.\d+)?)\s*°?\s*C(?:elsius)?\b/gi,
+    (_, a) => `${round1(toF(parseFloat(a)))} °F`
+  );
+  return t;
+}
+
+function convertCentimetersToInches(s: string): string {
+  if (!s) return s;
+  let t = s.replace(EN_DASH, '-');
+
+  // ranges like "2-3 cm"
+  t = t.replace(
+    /\b(\d+(?:\.\d+)?)\s*(?:to|-)\s*(\d+(?:\.\d+)?)\s*cm\b/gi,
+    (_, a, b) => `${round1(toIn(parseFloat(a)))}–${round1(toIn(parseFloat(b)))} in`
+  );
+  // singles like "5 cm"
+  t = t.replace(
+    /\b(\d+(?:\.\d+)?)\s*cm\b/gi,
+    (_, a) => `${round1(toIn(parseFloat(a)))} in`
+  );
+  return t;
+}
+
+function applyUnitPreference(text: string, units: UnitPref): string {
+  if (!text) return text;
+  if (units === 'us') {
+    let out = convertTemperaturesToF(text);
+    out = convertCentimetersToInches(out);
+    return out;
+  }
+  return text;
+}
+
 function normalizeMethodLabel(raw: string): CanonMethod {
   const k = raw.trim().toLowerCase();
   if (k.includes('air')) return 'air_layering';
@@ -229,27 +444,69 @@ export function useGenerateCare() {
   const [data, setData]       = useState<CareResult | null>(null);
   const [error, setError]     = useState<string | null>(null);
 
-  const run = useCallback(async ({ plantsTableId, commonName, scientificName }: Args) => {
+  // Progress state
+  const [progress, setProgress] = useState<ProgressEvent[]>([]);
+  const [currentStage, setCurrentStage] = useState<StageKey | null>(null);
+
+  function emit(evt: ProgressEvent, onProgress?: RunOpts['onProgress']) {
+    setProgress(prev => {
+      const idx = prev.findIndex(p => p.key === evt.key);
+      const next = [...prev];
+      if (idx >= 0) next[idx] = { ...next[idx], ...evt };
+      else next.push(evt);
+      onProgress?.(evt, next);
+      return next;
+    });
+    setCurrentStage(evt.key);
+  }
+
+  async function stage<T>(
+    key: StageKey,
+    label: string,
+    fn: () => Promise<T>,
+    onProgress?: RunOpts['onProgress'],
+    meta?: Record<string, any>
+  ): Promise<T> {
+    const startedAt = Date.now();
+    emit({ key, label, status: 'running', startedAt, meta }, onProgress);
+    try {
+      const result = await fn();
+      emit({ key, label, status: 'success', startedAt, endedAt: Date.now(), meta }, onProgress);
+      return result;
+    } catch (e: any) {
+      const err = e?.message ?? String(e);
+      emit({ key, label, status: 'error', startedAt, endedAt: Date.now(), error: err, meta }, onProgress);
+      throw e;
+    }
+  }
+
+  const run = useCallback(async (opts: RunOpts): Promise<CareResult> => {
+    const { plantsTableId, commonName, scientificName, onProgress, units = DEFAULT_UNITS } = opts;
     setLoading(true);
     setError(null);
+    setProgress([]);
+    setCurrentStage(null);
 
     try {
-      // Read existing columns we care about
-      const pre = (await supabase
-        .from('plants')
-        .select('id, plant_name, care_light, care_water, care_temp_humidity, care_fertilizer, care_pruning, soil_description, propagation_methods_json')
-        .eq('id', plantsTableId)
-        .maybeSingle()) as SBResp<{
-          id: string;
-          plant_name: string | null;
-          care_light: string | null;
-          care_water: string | null;
-          care_temp_humidity: string | null;
-          care_fertilizer: string | null;
-          care_pruning: string | null;
-          soil_description: string | null;
-          propagation_methods_json: { method: CanonMethod; difficulty: Difficulty; description: string }[] | null;
-        }>;
+      // DB read
+      const pre = await stage('db_read', 'Read plant row', async () => {
+        return (await supabase
+          .from('plants')
+          .select('id, plant_name, care_light, care_water, care_temp_humidity, care_fertilizer, care_pruning, soil_description, propagation_methods_json')
+          .eq('id', plantsTableId)
+          .maybeSingle()) as SBResp<{
+            id: string;
+            plant_name: string | null;
+            care_light: string | null;
+            care_water: string | null;
+            care_temp_humidity: string | null;
+            care_fertilizer: string | null;
+            care_pruning: string | null;
+            soil_description: string | null;
+            propagation_methods_json: { method: CanonMethod; difficulty: Difficulty; description: string }[] | null;
+          }>;
+      }, onProgress);
+
       if (pre.error) throw pre.error;
       const db = pre.data || null;
 
@@ -263,78 +520,107 @@ export function useGenerateCare() {
 
       const baseInput = makeInput(db?.plant_name || commonName, scientificName);
 
-      // --- Care blocks ---
-      const light = hasLight ? { care_light: db!.care_light! } :
-        await openAIJson<{ care_light: string }>(
-          SCHEMA_LIGHT,
-          [
-            'You are a precise botany/cultivation writer.', sharedNameNote, 'Return ONLY JSON.',
-            'Exactly three sentences on species-specific light: ideal placement, risks of too little/too much, seasonal/window nuance.'
-          ].join(' '),
-          baseInput, 300);
+      // Profile (hard rules + fill)
+      const sciKey = (scientificName || '').trim().toLowerCase();
+      const hard = HARD_RULES[sciKey] || null;
 
-      const water = hasWater ? { care_water: db!.care_water! } :
-        await openAIJson<{ care_water: string }>(
-          SCHEMA_WATER,
-          [
-            'You are a precise botany/cultivation writer.', sharedNameNote, 'Return ONLY JSON.',
-            'One concise paragraph on watering THIS species; include moisture cues and drainage. No humidity talk.'
-          ].join(' '),
-          baseInput, 500);
+      const profile = await stage('profile', 'Build species profile', async () => {
+        if (hard) {
+          const fillInstr = profileInstructions();
+          const filled = await openAIJson<Profile>(
+            SCHEMA_PROFILE,
+            fillInstr,
+            `${baseInput}\nUse these fixed defaults if sensible: ${JSON.stringify(hard)}\nOnly output JSON.`,
+            500
+          );
+          return { ...filled, ...hard } as Profile;
+        } else {
+          return await openAIJson<Profile>(
+            SCHEMA_PROFILE,
+            profileInstructions(),
+            `${baseInput}\nOnly output JSON.`,
+            500
+          );
+        }
+      }, onProgress, { hardRuled: !!hard });
+
+      // Deterministic light/water
+      const { care_light: careLight, care_water: careWater } = await stage(
+        'light_water',
+        'Render light/water from profile',
+        async () => {
+          const templatedLight  = renderLightFromProfile(profile);
+          const templatedWater0 = renderWaterFromProfile(profile);
+          const templatedWater  = fixContradictions(templatedLight, templatedWater0);
+          return { care_light: templatedLight, care_water: templatedWater };
+        },
+        onProgress
+      );
+
+      const light = hasLight ? { care_light: db!.care_light! } : { care_light: careLight };
+      const water = hasWater ? { care_water: db!.care_water! } : { care_water: careWater };
 
       const th = hasTH ? { care_temp_humidity: db!.care_temp_humidity! } :
-        await openAIJson<{ care_temp_humidity: string }>(
-          SCHEMA_TEMP_HUM,
-          [
-            'You are a precise botany/cultivation writer.', sharedNameNote, 'Return ONLY JSON.',
-            'One paragraph with numeric temp range, RH range, and damage thresholds for THIS species.'
-          ].join(' '),
-          baseInput, 550);
+        await stage('care_temp_humidity', 'Generate temp & humidity', async () =>
+          openAIJson<{ care_temp_humidity: string }>(
+            SCHEMA_TEMP_HUM,
+            [
+              'You are a precise botany/cultivation writer.', sharedNameNote, 'Return ONLY JSON.',
+              'One paragraph with numeric temp range, RH range, and damage thresholds for THIS species.'
+            ].join(' '),
+            baseInput, 550
+          ), onProgress);
 
       const fert = hasFert ? { care_fertilizer: db!.care_fertilizer! } :
-        await openAIJson<{ care_fertilizer: string }>(
-          SCHEMA_FERT,
-          [
-            'You are a precise botany/cultivation writer.', sharedNameNote, 'Return ONLY JSON.',
-            'Two sentences: formulation/dilution, then frequency/seasonality.'
-          ].join(' '),
-          baseInput, 300);
+        await stage('care_fertilizer', 'Generate fertilizer guidance', async () =>
+          openAIJson<{ care_fertilizer: string }>(
+            SCHEMA_FERT,
+            [
+              'You are a precise botany/cultivation writer.', sharedNameNote, 'Return ONLY JSON.',
+              'Two sentences: formulation/dilution, then frequency/seasonality.'
+            ].join(' '),
+            baseInput, 300
+          ), onProgress);
 
       const prune = hasPrune ? { care_pruning: db!.care_pruning! } :
-        await openAIJson<{ care_pruning: string }>(
-          SCHEMA_PRUNE,
-          [
-            'You are a precise botany/cultivation writer.', sharedNameNote, 'Return ONLY JSON.',
-            '2–3 sentences: when/why/how to prune THIS species; tie to plant form.'
-          ].join(' '),
-          baseInput, 350);
+        await stage('care_pruning', 'Generate pruning guidance', async () =>
+          openAIJson<{ care_pruning: string }>(
+            SCHEMA_PRUNE,
+            [
+              'You are a precise botany/cultivation writer.', sharedNameNote, 'Return ONLY JSON.',
+              '2–3 sentences: when/why/how to prune THIS species; tie to plant form.'
+            ].join(' '),
+            baseInput, 350
+          ), onProgress);
 
-      // --- Soil (moved here) ---
       const soil = hasSoil ? { soil_description: db!.soil_description! } :
-        await openAIJson<{ soil_description: string }>(
-          SCHEMA_SOIL,
-          [
-            'You are a precise botany/cultivation writer.', sharedNameNote, 'Return ONLY JSON.',
-            'One paragraph: ideal soil properties + best-practice mix for THIS species.'
-          ].join(' '),
-          baseInput, 600);
+        await stage('soil_description', 'Generate soil/mix guidance', async () =>
+          openAIJson<{ soil_description: string }>(
+            SCHEMA_SOIL,
+            [
+              'You are a precise botany/cultivation writer.', sharedNameNote, 'Return ONLY JSON.',
+              'Three sentences: ideal soil properties + best-practice mix for THIS species.'
+            ].join(' '),
+            baseInput, 800
+          ), onProgress);
 
-      // --- Propagation (moved here) ---
       let prop: { propagation_techniques: { method: string; difficulty: Difficulty; description: string }[] } | null = null;
       if (hasProp) {
         prop = { propagation_techniques: db!.propagation_methods_json! };
       } else {
-        const propInstr = [
-          'You are a precise botany writer.', sharedNameNote,
-          'Output MUST match the JSON schema exactly and return ONLY JSON.',
-          'Techniques MUST be realistic for THIS species; include concrete anatomy cues and counts/timings.',
-          'One compact paragraph per technique; 1–3 techniques total.'
-        ].join(' ');
-        prop = await openAIJson(SCHEMA_PROPAGATION, propInstr, baseInput, 800);
+        prop = await stage('propagation', 'Generate propagation techniques', async () => {
+          const propInstr = [
+            'You are a precise botany writer.', sharedNameNote,
+            'Output MUST match the JSON schema exactly and return ONLY JSON.',
+            'Techniques MUST be realistic for THIS species; include concrete anatomy cues and counts/timings.',
+            'One compact paragraph per technique; 1–3 techniques total.'
+          ].join(' ');
+          return openAIJson(SCHEMA_PROPAGATION, propInstr, baseInput, 800);
+        }, onProgress);
       }
 
       // Compose result
-      const result: CareResult = {
+      let result: CareResult = {
         care_light: light.care_light,
         care_water: water.care_water,
         care_temp_humidity: th.care_temp_humidity,
@@ -348,6 +634,23 @@ export function useGenerateCare() {
         })),
       };
 
+      // Apply unit preference (default US) to model-generated strings.
+      // Avoid converting our templated water (already "1 in (2–3 cm)") unless it came from DB.
+      if (units === 'us') {
+        result = {
+          ...result,
+          care_water: hasWater ? applyUnitPreference(result.care_water, 'us') : result.care_water,
+          care_temp_humidity: applyUnitPreference(result.care_temp_humidity, 'us'),
+          care_fertilizer: applyUnitPreference(result.care_fertilizer, 'us'),
+          care_pruning: applyUnitPreference(result.care_pruning, 'us'),
+          soil_description: result.soil_description ? applyUnitPreference(result.soil_description, 'us') : result.soil_description,
+          propagation_techniques: result.propagation_techniques?.map(t => ({
+            ...t,
+            description: applyUnitPreference(t.description, 'us'),
+          })),
+        };
+      }
+
       // Persist any newly generated fields
       const payload: Record<string, any> = {};
       if (!hasLight) payload.care_light = result.care_light;
@@ -359,16 +662,17 @@ export function useGenerateCare() {
       if (!hasProp)  payload.propagation_methods_json = result.propagation_techniques;
 
       if (Object.keys(payload).length > 0) {
-        try {
-          await withTimeout<SBResp>(
+        await stage('db_write', 'Write back to Supabase', async () => {
+          return withTimeout<SBResp>(
             supabase.from('plants').update(payload).eq('id', plantsTableId) as unknown as PromiseLike<SBResp>,
             15_000,
             'Supabase update(plants care+extras)'
           );
-        } catch {
-          // swallow; still return result to UI
-        }
+        }, onProgress);
       }
+
+      // mark done
+      emit({ key: 'done', label: 'Finished', status: 'success', startedAt: Date.now(), endedAt: Date.now() }, onProgress);
 
       setData(result);
       return result;
@@ -381,5 +685,6 @@ export function useGenerateCare() {
     }
   }, []);
 
-  return { loading, data, error, run };
+  // Expose progress + current stage too
+  return { loading, data, error, progress, currentStage, run };
 }

@@ -24,6 +24,7 @@ import PlantDetailScreen from '../../src/screens/PlantDetailScreen';
 import PlantIdentificationResultScreen from '../../src/screens/PlantIdentificationResultScreen';
 import EditProfileScreen from '@/src/screens/EditProfileScreen';
 import AddObserveScreen from '@/src/screens/ObserveScreen';
+import ViewObservationScreen from '@/src/screens/ViewObservationScreen';
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -210,6 +211,7 @@ export default function RootNavigator() {
             <Stack.Screen name="Profile" component={ProfileScreen as any} />
             <Stack.Screen name="EditProfile" component={EditProfileScreen as any} />
             <Stack.Screen name="Observe" component={AddObserveScreen as any} />
+            <Stack.Screen name="ViewObservation" component={ViewObservationScreen as any} />
           </>
         )}
       </Stack.Navigator>

@@ -47,7 +47,13 @@ export default function PlantDetailScreen() {
     timelineKey: 0,
     genLoading: false,
   });
-  const [overlay, setOverlay] = useState<{ visible: boolean; message: string }>({ visible: false, message: '' });
+  
+  const [overlay, setOverlay] = useState<{ visible: boolean; message: string; percent?: number; sublabel?: string }>({
+    visible: false,
+    message: '',
+    percent: undefined,
+    sublabel: undefined,
+  });
 
   const [status, setStatus] = useState({ loading: true, error: null as string | null });
 
@@ -82,7 +88,7 @@ export default function PlantDetailScreen() {
   const [drafts, setDrafts] = useState({ location: '', soilRows: [] as SoilRowDraft[], potNote: '' });
   const [potDraft, setPotDraft] = useState({ potType: '', drainageSystem: '', potHeightIn: '', potDiameterIn: '' });
 
-  const [openSection, setOpenSection] = useState<'care' | 'timeline' | 'environment' | 'propagation' | 'photos' | null>(null);
+  const [openSection, setOpenSection] = useState<'care' | 'timeline' | 'environment' | 'propagation' | 'photos' | null>('care');
   const toggle = (key: NonNullable<typeof openSection>) => setOpenSection((curr) => (curr === key ? null : key));
 
   // Debounce ref for favorite
@@ -91,6 +97,55 @@ export default function PlantDetailScreen() {
   const { loading: genFactsLoading, run: generateFacts } = useGeneratePlantFacts();
   const { loading: genCareLoading,  run: generateCare  } = useGenerateCare();
   const genLoading = ui.genLoading || genFactsLoading || genCareLoading;
+
+    // ---- Progress wiring (same shape CareSection emits) ----
+  type StageKey =
+    | 'db_read'
+    | 'profile'
+    | 'light_water'
+    | 'care_temp_humidity'
+    | 'care_fertilizer'
+    | 'care_pruning'
+    | 'soil_description'
+    | 'propagation'
+    | 'db_write'
+    | 'done';
+  type ProgressEvent = {
+    key: StageKey;
+    label: string;
+    status: 'pending' | 'running' | 'success' | 'error';
+    error?: string;
+  };
+  const STAGE_ORDER: StageKey[] = [
+    'db_read',
+    'profile',
+    'light_water',
+    'care_temp_humidity',
+    'care_fertilizer',
+    'care_pruning',
+    'soil_description',
+    'propagation',
+    'db_write',
+    'done',
+  ];
+  const calcPercent = (k: StageKey) => {
+    const i = Math.max(0, STAGE_ORDER.indexOf(k));
+    const total = STAGE_ORDER.length - 1; // treat "done" as 100%
+    return Math.round((i / total) * 100);
+  };
+  const STAGE_LABELS: Record<StageKey, string> = {
+    db_read: 'Reading plant record',
+    profile: 'Building species profile',
+    light_water: 'Rendering light & water',
+    care_temp_humidity: 'Generating temp & humidity',
+    care_fertilizer: 'Generating fertilizer plan',
+    care_pruning: 'Generating pruning guidance',
+    soil_description: 'Generating soil & mix',
+    propagation: 'Generating propagation',
+    db_write: 'Saving updates',
+    done: 'Finished',
+  };
+
 
   const rarityLabel = useMemo(() => labelRarity(plant.rarity), [plant.rarity]);
   const availabilityLabel = useMemo(() => labelAvailability(plant.availability), [plant.availability]);
@@ -123,7 +178,7 @@ export default function PlantDetailScreen() {
         if (modals.pot) { setModals((m) => ({ ...m, pot: false })); return true; }
         if ((modals as any).confirmName?.open) { setModals((m: any) => ({ ...m, confirmName: { open: false, suggested: null } })); return true; }
         // Always navigate to My Plants page
-        (nav as any).navigate('plants');
+        (nav as any).navigate('MainTabs', { screen: 'MyPlants' });
         return true;
       };
       const sub = BackHandler.addEventListener('hardwareBackPress', onBack);
@@ -231,7 +286,26 @@ export default function PlantDetailScreen() {
 
   // ===== Helpers =====
   const showOverlay = (message: string) => setOverlay({ visible: true, message });
-  const hideOverlay = () => setOverlay({ visible: false, message: '' });
+  const hideOverlay = () => setOverlay({ visible: false, message: '', percent: undefined, sublabel: undefined });
+
+  const handleCareProgress = useCallback((evt: ProgressEvent) => {
+    const label = STAGE_LABELS[evt.key] ?? evt.label ?? 'Working…';
+    const percent = calcPercent(evt.key);
+
+    if (evt.status === 'error') {
+      hideOverlay();
+      Alert.alert('Generation failed', evt.error || 'Please try again.');
+      return;
+    }
+
+    setOverlay({ visible: true, message: 'Generating care…', percent, sublabel: label });
+
+    if (evt.key === 'done' && evt.status === 'success') {
+      // optional: refresh details after save
+      fetchDetails(true);
+      setTimeout(hideOverlay, 400);
+    }
+  }, [fetchDetails]);
 
   const maybeApplySuggestedCommonName = useCallback(async (suggested?: string | null) => {
     if (!suggested || !suggested.trim() || !plant.plantsTableId) return;
@@ -344,7 +418,7 @@ export default function PlantDetailScreen() {
       <TopBar
         title={plant.displayName || 'Plant'}
         isFavorite={plant.isFavorite}
-        onBack={() => (nav as any).navigate('MainTabs')}
+        onBack={() => (nav as any).navigate('MainTabs', { screen: 'MyPlants' })}
         onToggleFavorite={toggleFavorite}
         onToggleMenu={() => setUi((u) => ({ ...u, menuOpen: !u.menuOpen }))}
       />
@@ -381,6 +455,8 @@ export default function PlantDetailScreen() {
         headerBackgroundColor={{ light: '#E5F4EF', dark: '#12231F' }}
         refreshing={ui.refreshing}
         onRefresh={onRefresh}
+        enableLightbox={!!plant.headerUrl}
+        lightboxImages={plant.headerUrl ? [{ uri: plant.headerUrl, id: 'plant-header' }] : []}
         headerImage={
           plant.headerUrl ? (
             <Image
@@ -469,12 +545,13 @@ export default function PlantDetailScreen() {
                   displayName={plant.displayName}
                   scientificName={plant.scientific}
                   showOverlay={(msg) => setOverlay({ visible: true, message: msg })}
-                  hideOverlay={() => setOverlay({ visible: false, message: '' })}
+                  hideOverlay={() => setOverlay({ visible: false, message: '', percent: undefined, sublabel: undefined })}
                   onRefetch={() => fetchDetails(true)}
                   onWater={() => setModals((m) => ({ ...m, water: true }))}   // <— opens WaterModal
                   onFertilize={() => {}}
                   onPrune={() => {}}
                   onObserve={() => (nav as any).navigate('Observe', { id })}
+                  onCareProgress={handleCareProgress}
                 />
               </Section>
 
@@ -613,7 +690,24 @@ export default function PlantDetailScreen() {
         <View style={styles.overlayBackdrop}>
           <View style={[styles.overlayCard, { backgroundColor: theme.colors.card, borderColor: theme.colors.border }] }>
             <ActivityIndicator color={theme.colors.text as any} />
-            <ThemedText style={{ marginTop: 12 }}>{overlay.message || 'Working…'}</ThemedText>
+            <ThemedText style={{ marginTop: 12, fontWeight: '700' }}>
+              {overlay.message || 'Working…'}
+            </ThemedText>
+            {overlay.sublabel && (
+              <ThemedText style={{ marginTop: 4, fontWeight: '700', color: theme.colors.mutedText }}>
+                {overlay.sublabel}
+              </ThemedText>
+            )}
+            {typeof overlay.percent === 'number' && (
+              <>
+                <View style={styles.progressWrap}>
+                  <View style={[styles.progressBar, { width: `${overlay.percent}%`, backgroundColor: theme.colors.text }]} />
+                </View>
+                <ThemedText style={{ marginTop: 6, opacity: 0.7 }}>
+                  {overlay.percent}%
+                </ThemedText>
+              </>
+            )}
           </View>
           <Pressable style={styles.overlayBlocker} />
         </View>
@@ -705,4 +799,16 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   overlayBlocker: { position: 'absolute', inset: 0 },
+  progressWrap: {
+    width: 220,
+    height: 8,
+    borderRadius: 8,
+    backgroundColor: 'rgba(0,0,0,0.08)',
+    marginTop: 12,
+    overflow: 'hidden',
+  },
+  progressBar: {
+    height: '100%',
+    borderRadius: 8,
+  },
 });

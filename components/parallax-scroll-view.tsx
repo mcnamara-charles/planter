@@ -1,6 +1,7 @@
 // ParallaxScrollView.tsx
+import React, { useState } from 'react';
 import type { PropsWithChildren, ReactElement } from 'react';
-import { RefreshControl, StyleSheet } from 'react-native';
+import { RefreshControl, StyleSheet, TouchableOpacity } from 'react-native';
 import Animated, {
   interpolate,
   useAnimatedRef,
@@ -11,6 +12,7 @@ import Animated, {
 import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useThemeColor } from '@/hooks/use-theme-color';
+import ImageLightbox from '@/components/ImageLightbox';
 
 const DEFAULT_HEADER_HEIGHT = 250;
 
@@ -24,6 +26,10 @@ type Props = PropsWithChildren<{
   /** optional: pull-to-refresh */
   refreshing?: boolean;
   onRefresh?: () => void;
+  /** optional: enable lightbox for header image */
+  enableLightbox?: boolean;
+  /** optional: lightbox images (single or multiple) */
+  lightboxImages?: { uri: string; id?: string }[];
 }>;
 
 export default function ParallaxScrollView({
@@ -34,11 +40,14 @@ export default function ParallaxScrollView({
   headerOverlay = null,
   refreshing = false,
   onRefresh,
+  enableLightbox = false,
+  lightboxImages = [],
 }: Props) {
   const backgroundColor = useThemeColor({}, 'background');
   const colorScheme = useColorScheme() ?? 'light';
   const scrollRef = useAnimatedRef<Animated.ScrollView>();
   const scrollOffset = useScrollOffset(scrollRef);
+  const [lightboxOpen, setLightboxOpen] = useState(false);
 
   const headerAnimatedStyle = useAnimatedStyle(() => {
     return {
@@ -62,25 +71,42 @@ export default function ParallaxScrollView({
   });
 
   return (
-    <Animated.ScrollView
-      ref={scrollRef}
-      style={{ backgroundColor, flex: 1 }}
-      scrollEventThrottle={16}
-      refreshControl={onRefresh ? <RefreshControl refreshing={refreshing} onRefresh={onRefresh} /> : undefined}
-    >
-      <Animated.View
-        style={[
-          styles.header,
-          { height: headerHeight, backgroundColor: headerBackgroundColor[colorScheme] },
-          headerAnimatedStyle,
-        ]}
+    <>
+      <Animated.ScrollView
+        ref={scrollRef}
+        style={{ backgroundColor, flex: 1 }}
+        scrollEventThrottle={16}
+        refreshControl={onRefresh ? <RefreshControl refreshing={refreshing} onRefresh={onRefresh} /> : undefined}
       >
-        {headerImage}
-        {headerOverlay ? <Animated.View style={styles.headerOverlay}>{headerOverlay}</Animated.View> : null}
-      </Animated.View>
+        <Animated.View
+          style={[
+            styles.header,
+            { height: headerHeight, backgroundColor: headerBackgroundColor[colorScheme] },
+            headerAnimatedStyle,
+          ]}
+        >
+          {enableLightbox ? (
+            <TouchableOpacity activeOpacity={0.9} onPress={() => setLightboxOpen(true)}>
+              {headerImage}
+            </TouchableOpacity>
+          ) : (
+            headerImage
+          )}
+          {headerOverlay ? <Animated.View style={styles.headerOverlay}>{headerOverlay}</Animated.View> : null}
+        </Animated.View>
 
-      <ThemedView style={styles.content}>{children}</ThemedView>
-    </Animated.ScrollView>
+        <ThemedView style={styles.content}>{children}</ThemedView>
+      </Animated.ScrollView>
+
+      {enableLightbox && lightboxImages.length > 0 && (
+        <ImageLightbox
+          visible={lightboxOpen}
+          images={lightboxImages}
+          initialIndex={0}
+          onClose={() => setLightboxOpen(false)}
+        />
+      )}
+    </>
   );
 }
 

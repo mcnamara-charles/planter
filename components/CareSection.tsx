@@ -1,12 +1,12 @@
 // components/CareSection.tsx
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, StyleSheet, View } from 'react-native';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useTheme } from '@/context/themeContext';
 import { supabase } from '@/services/supabaseClient';
 import GenerateFactsButton from '@/components/GenerateFactsButton';
-import { ButtonPill } from '@/components/Buttons'; // <-- add this
+import { ButtonPill } from '@/components/Buttons';
 import { useGenerateCare } from '@/hooks/useGenerateCare';
 
 type CareRows = {
@@ -30,7 +30,8 @@ export default function CareSection({
   onFertilize,
   onPrune,
   onObserve,
-  showActionButtons = true, // <-- new prop to control action buttons
+  showActionButtons = true, // control action buttons
+  onCareProgress,
 }: {
   isOpen: boolean;
   plantsTableId: string | null;
@@ -40,11 +41,27 @@ export default function CareSection({
   showOverlay: (msg: string) => void;
   hideOverlay: () => void;
   onRefetch?: () => Promise<void>;
-  onWater?: () => void;      // <-- new
-  onFertilize?: () => void;  // <-- new
-  onPrune?: () => void;      // <-- new
-  onObserve?: () => void;    // <-- new
-  showActionButtons?: boolean; // <-- new prop
+  onWater?: () => void;
+  onFertilize?: () => void;
+  onPrune?: () => void;
+  onObserve?: () => void;
+  showActionButtons?: boolean;
+  onCareProgress?: (evt: {
+    key:
+      | 'db_read'
+      | 'profile'
+      | 'light_water'
+      | 'care_temp_humidity'
+      | 'care_fertilizer'
+      | 'care_pruning'
+      | 'soil_description'
+      | 'propagation'
+      | 'db_write'
+      | 'done';
+    label: string;
+    status: 'pending' | 'running' | 'success' | 'error';
+    error?: string;
+  }) => void;
 }) {
   const { theme } = useTheme();
   const [loading, setLoading] = useState(false);
@@ -53,6 +70,34 @@ export default function CareSection({
   const [care, setCare] = useState<CareRows | null>(null);
 
   const { run: generateCare } = useGenerateCare();
+
+  // ---- After-commit emitters (avoid parent updates during render) ----
+  type ProgressEvt = NonNullable<Parameters<NonNullable<typeof onCareProgress>>[0]>;
+  const progressQueueRef = useRef<ProgressEvt[]>([]);
+  const postCommitTasksRef = useRef<Array<() => void>>([]);
+  const [commitTick, setCommitTick] = useState(0); // bump to flush after commit
+
+  const emitProgress = useCallback((evt: ProgressEvt) => {
+    progressQueueRef.current.push(evt);
+    setCommitTick((t) => t + 1);
+  }, []);
+
+  const afterCommit = useCallback((fn: () => void) => {
+    postCommitTasksRef.current.push(fn);
+    setCommitTick((t) => t + 1);
+  }, []);
+
+  useEffect(() => {
+    // Flush progress first (drives overlay/status), then any other tasks (like onRefetch)
+    if (onCareProgress && progressQueueRef.current.length) {
+      const batch = progressQueueRef.current.splice(0);
+      for (const evt of batch) onCareProgress(evt);
+    }
+    if (postCommitTasksRef.current.length) {
+      const tasks = postCommitTasksRef.current.splice(0);
+      for (const fn of tasks) fn();
+    }
+  }, [commitTick, onCareProgress]);
 
   const fetchCare = useCallback(async () => {
     if (!plantsTableId) return;
@@ -82,15 +127,22 @@ export default function CareSection({
     if (!plantsTableId) return;
     try {
       setGenBusy(true);
-      showOverlay('Generating care instructions…');
+
+      // Send a "starting" ping to parent, flushed right after commit
+      emitProgress({
+        key: 'db_read',
+        label: 'Reading plant record',
+        status: 'running',
+      });
 
       const res = await generateCare({
         plantsTableId,
         commonName: commonName || displayName,
         scientificName,
+        units: 'us', // inches + °F
+        // Forward every stage; flush after commit
+        onProgress: (evt) => emitProgress(evt),
       });
-
-      showOverlay('Saving updates…');
 
       if (res) {
         setCare({
@@ -102,17 +154,22 @@ export default function CareSection({
         });
       }
 
-      if (onRefetch) await onRefetch();
+      // Ask parent to refetch after commit (avoids parent setState during child render)
+      if (onRefetch) afterCommit(() => { void onRefetch(); });
 
-      showOverlay('Done');
-      setTimeout(() => hideOverlay(), 500);
+      // Parent will close the overlay on 'done' via progress
     } catch (e: any) {
-      hideOverlay();
-      Alert.alert('Generation failed', e?.message ?? 'Please try again.');
+      // Bubble error to parent via progress; it will Alert + close overlay
+      emitProgress({
+        key: 'done',
+        label: 'Failed',
+        status: 'error',
+        error: e?.message ?? 'Unknown error',
+      });
     } finally {
       setGenBusy(false);
     }
-  }, [plantsTableId, commonName, displayName, scientificName, generateCare, onRefetch, showOverlay, hideOverlay]);
+  }, [plantsTableId, commonName, displayName, scientificName, generateCare, onRefetch, emitProgress, afterCommit]);
 
   const Row = ({ title, body }: { title: string; body?: string | null }) => {
     const text = body?.trim() ? body!.trim() : 'Data not present';
@@ -142,10 +199,28 @@ export default function CareSection({
         {/* Action pills - only show if showActionButtons is true */}
         {showActionButtons && (
           <>
-            <ButtonPill label="Water"     variant="solid" color="primary" onPress={() => onWater?.()} />
-            <ButtonPill label="Fertilize" variant="solid" color="primary" onPress={() => onFertilize?.()} />
-            <ButtonPill label="Prune"     variant="solid" color="primary" onPress={() => onPrune?.()} />
-            <ButtonPill label="Observe"   variant="solid" color="primary" onPress={() => onObserve?.()} />
+            <ButtonPill
+              label="Water"
+              variant="solid"
+              color="primary"
+              onPress={() => onWater?.()}
+              style={{ backgroundColor: '#10B981', borderColor: '#10B981' }}
+            />
+            <ButtonPill
+              label="Fertilize"
+              variant="solid"
+              color="primary"
+              onPress={() => onFertilize?.()}
+              style={{ backgroundColor: '#10B981', borderColor: '#10B981' }}
+            />
+            <ButtonPill
+              label="Prune"
+              variant="solid"
+              color="primary"
+              onPress={() => onPrune?.()}
+              style={{ backgroundColor: '#10B981', borderColor: '#10B981' }}
+            />
+            <ButtonPill label="Observe" variant="solid" color="primary" onPress={() => onObserve?.()} />
           </>
         )}
       </View>
@@ -163,11 +238,11 @@ export default function CareSection({
         <ThemedText style={{ color: '#d11a2a' }}>{error}</ThemedText>
       ) : (
         <>
-          <Row title="Light"                  body={care?.care_light} />
-          <Row title="Water"                  body={care?.care_water} />
+          <Row title="Light" body={care?.care_light} />
+          <Row title="Water" body={care?.care_water} />
           <Row title="Temperature & Humidity" body={care?.care_temp_humidity} />
-          <Row title="Fertilizer"             body={care?.care_fertilizer} />
-          <Row title="Pruning"                body={care?.care_pruning} />
+          <Row title="Fertilizer" body={care?.care_fertilizer} />
+          <Row title="Pruning" body={care?.care_pruning} />
         </>
       )}
     </View>
