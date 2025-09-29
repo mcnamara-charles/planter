@@ -29,10 +29,13 @@ type ObservationData = {
     width_in: number;
     height_in: number;
     leaf_count: number;
+    rootbound?: boolean;
   };
   health: {
     is_healthy: boolean;
     damage_desc: string;
+    pests?: string;
+    pest_severity?: string | null;
   };
   medium: {
     depth_in: number;
@@ -52,7 +55,8 @@ type TimelineEvent = {
 
 type EventPhoto = {
   id: string;
-  url: string;
+  coverUrl: string;
+  containUrl: string;
 };
 
 export default function ViewObservationScreen() {
@@ -69,7 +73,7 @@ export default function ViewObservationScreen() {
 
   const [timelineEvent, setTimelineEvent] = useState<TimelineEvent | null>(null);
   const [photos, setPhotos] = useState<EventPhoto[]>([]);
-  const [selectedPhotoUrl, setSelectedPhotoUrl] = useState<string | null>(null);
+  const [selectedPhotoCoverUrl, setSelectedPhotoCoverUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const observationData = useMemo(() => {
@@ -125,23 +129,28 @@ export default function ViewObservationScreen() {
         const photosWithUrls: EventPhoto[] = [];
         for (const photo of photosData || []) {
           const bucket = photo.bucket || 'plant-photos';
-          const { data: signed } = await supabase.storage
+          const { data: signedCover } = await supabase.storage
             .from(bucket)
             .createSignedUrl(photo.object_path, 60 * 60, {
-              transform: { width: 900, quality: 85, resize: 'cover' },
+              transform: { width: 1200, quality: 90, resize: 'cover' },
             });
-          
-          if (signed?.signedUrl) {
+          const { data: signedContain } = await supabase.storage
+            .from(bucket)
+            .createSignedUrl(photo.object_path, 60 * 60, {
+              transform: { width: 1600, quality: 90, resize: 'contain' },
+            });
+          if (signedCover?.signedUrl && signedContain?.signedUrl) {
             photosWithUrls.push({
               id: photo.id,
-              url: signed.signedUrl,
+              coverUrl: signedCover.signedUrl,
+              containUrl: signedContain.signedUrl,
             });
           }
         }
 
         setPhotos(photosWithUrls);
         if (photosWithUrls.length > 0) {
-          setSelectedPhotoUrl(photosWithUrls[0].url);
+          setSelectedPhotoCoverUrl(photosWithUrls[0].coverUrl);
         }
       }
     } catch (err: any) {
@@ -156,10 +165,10 @@ export default function ViewObservationScreen() {
   }, [fetchObservationData]);
 
   const selectPhoto = useCallback((photo: EventPhoto) => {
-    setSelectedPhotoUrl(photo.url);
+    setSelectedPhotoCoverUrl(photo.coverUrl);
   }, []);
 
-  const isRemoteHeader = !!selectedPhotoUrl;
+  const isRemoteHeader = !!selectedPhotoCoverUrl;
   const showHeaderSkeleton = isRemoteHeader && !ui.heroLoaded;
 
   if (ui.loading) {
@@ -216,12 +225,12 @@ export default function ViewObservationScreen() {
       <ParallaxScrollView
         headerBackgroundColor={{ light: '#E5F4EF', dark: '#12231F' }}
         enableLightbox={photos.length > 0}
-        lightboxImages={photos.map(p => ({ uri: p.url, id: p.id }))}
+        lightboxImages={photos.map(p => ({ uri: p.containUrl, id: p.id }))}
         headerImage={
-          selectedPhotoUrl ? (
+          selectedPhotoCoverUrl ? (
             <Image
-              key={selectedPhotoUrl}
-              source={{ uri: selectedPhotoUrl }}
+              key={selectedPhotoCoverUrl}
+              source={{ uri: selectedPhotoCoverUrl }}
               contentFit="cover"
               transition={200}
               style={styles.headerImage}
@@ -246,7 +255,7 @@ export default function ViewObservationScreen() {
               contentContainerStyle={styles.photoGalleryContent}
             >
               {photos.map((photo, idx) => {
-                const isSelected = selectedPhotoUrl === photo.url;
+                const isSelected = selectedPhotoCoverUrl === photo.coverUrl;
                 return (
                   <TouchableOpacity
                     key={photo.id}
@@ -258,7 +267,7 @@ export default function ViewObservationScreen() {
                     activeOpacity={0.8}
                   >
                     <Image 
-                      source={{ uri: photo.url }} 
+                      source={{ uri: photo.coverUrl }} 
                       contentFit="cover" 
                       style={styles.photoGalleryImage}
                     />
@@ -296,6 +305,12 @@ export default function ViewObservationScreen() {
                 <ThemedText style={styles.dataLabel}>Leaf Count</ThemedText>
                 <ThemedText style={styles.dataValue}>{observationData.growth.leaf_count}</ThemedText>
               </View>
+              {typeof observationData.growth.rootbound !== 'undefined' && (
+                <View style={styles.dataItem}>
+                  <ThemedText style={styles.dataLabel}>Rootbound</ThemedText>
+                  <ThemedText style={styles.dataValue}>{observationData.growth.rootbound ? 'Yes' : 'No'}</ThemedText>
+                </View>
+              )}
             </View>
           </Section>
 
@@ -322,6 +337,18 @@ export default function ViewObservationScreen() {
                 <ThemedText style={styles.dataLabel}>Damage</ThemedText>
                 <ThemedText style={styles.dataValue}>{observationData.health.damage_desc}</ThemedText>
               </View>
+              <View style={styles.dataItem}>
+                <ThemedText style={styles.dataLabel}>Pests</ThemedText>
+                <ThemedText style={styles.dataValue}>
+                  {observationData.health.pests || 'Clean'}
+                </ThemedText>
+              </View>
+              {observationData.health.pests && observationData.health.pests !== 'Clean' && observationData.health.pest_severity && (
+                <View style={styles.dataItem}>
+                  <ThemedText style={styles.dataLabel}>Pest Severity</ThemedText>
+                  <ThemedText style={styles.dataValue}>{observationData.health.pest_severity}</ThemedText>
+                </View>
+              )}
             </View>
           </Section>
 

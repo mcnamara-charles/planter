@@ -11,15 +11,15 @@ import { supabase } from '@/services/supabaseClient';
 import SkeletonTile from '@/components/SkeletonTile';
 import WaterModal from '@/components/WaterModal';
 import ConfirmNameModal from '@/components/ConfirmNameModal';
-import { useGeneratePlantFacts } from '@/hooks/useGeneratePlantFacts';
-import { useGenerateCare } from '@/hooks/useGenerateCare';
+import { useGeneratePlantData } from '@/hooks/generatePlantData';
+import { usePlantDataValidation } from '@/hooks/usePlantDataValidation';
 
 import TopBar from '@/components/TopBar';
 import Section from '@/components/Section';
 import AboutBox from '@/components/AboutBox';
 import CompactStatus from '@/components/CompactStatus';
 import CareSection from '@/components/CareSection';
-import GenerateFactsButton from '@/components/GenerateFactsButton';
+import PlantDataGenerationModal from '@/components/PlantDataGenerationModal';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 
 import { labelAvailability, labelRarity } from '@/utils/labels';
@@ -303,9 +303,11 @@ export default function PlantIdentificationResultScreen() {
   const [openSection, setOpenSection] = useState<'care' | null>('care');
   const toggle = (key: NonNullable<typeof openSection>) => setOpenSection((curr) => (curr === key ? null : key));
 
-  const { loading: genFactsLoading, run: generateFacts } = useGeneratePlantFacts();
-  const { loading: genCareLoading, run: generateCare } = useGenerateCare();
-  const genLoading = ui.genLoading || genFactsLoading || genCareLoading;
+  const { loading: genLoading, data: genData, error: genError, progressEvents, run: generatePlantData } = useGeneratePlantData();
+  const { validationResult, validatePlantData, hideModal } = usePlantDataValidation();
+  
+  // Track if user declined the update modal
+  const [userDeclinedUpdate, setUserDeclinedUpdate] = useState(false);
 
   const currentCandidate = useMemo(() => {
     return candidates[currentIndex] || candidates[0];
@@ -453,6 +455,13 @@ export default function PlantIdentificationResultScreen() {
       fetchPlantDetails(currentCandidate.scientificName);
     }
   }, [currentCandidate, fetchPlantDetails]);
+
+  // Validate plant data when plant is loaded
+  useEffect(() => {
+    if (plant.plantsTableId && !status.loading) {
+      validatePlantData(plant.plantsTableId);
+    }
+  }, [plant.plantsTableId, status.loading, validatePlantData]);
 
   const onRefresh = useCallback(() => {
     setUi((u) => ({ ...u, refreshing: true }));
@@ -627,24 +636,6 @@ export default function PlantIdentificationResultScreen() {
     });
   }, [plant.plantsTableId, imageUri, currentCandidate, plant.commonName, nav]);
 
-  const handleCareProgress = useCallback((evt: ProgressEvent) => {
-    const label = STAGE_LABELS[evt.key] ?? evt.label ?? 'Working…';
-    const percent = calcPercent(evt.key);
-
-    if (evt.status === 'error') {
-      hideOverlay();
-      Alert.alert('Generation failed', evt.error || 'Please try again.');
-      return;
-    }
-
-    showOverlay('Generating care…', percent, label);
-
-    if (evt.key === 'done' && evt.status === 'success') {
-      // optional: refresh plant details after save
-      fetchPlantDetails(currentCandidate.scientificName);
-      setTimeout(hideOverlay, 400);
-    }
-  }, [currentCandidate.scientificName, fetchPlantDetails]);
 
 
   // ===== Render =====
@@ -656,7 +647,14 @@ export default function PlantIdentificationResultScreen() {
         onBack={() => (nav as any).goBack()}
         onToggleFavorite={() => {}}
         onToggleMenu={() => {}}
-        hideActions
+        showUpdateButton={userDeclinedUpdate && validationResult.needsGeneration}
+        onUpdate={() => {
+          setUserDeclinedUpdate(false);
+          // Re-trigger validation to show the modal
+          if (plant.plantsTableId) {
+            validatePlantData(plant.plantsTableId);
+          }
+        }}
       />
 
       {/* Navigation arrows */}
@@ -776,47 +774,6 @@ export default function PlantIdentificationResultScreen() {
               )}
               <CompactStatus rarity={availabilityLabel ? rarityLabel : ''} availability={availabilityLabel} />
 
-              <GenerateFactsButton
-                label={genLoading ? 'Generating…' : 'Generate Facts'}
-                disabled={genLoading || !plant.plantsTableId}
-                onPress={async () => {
-                  if (!plant.plantsTableId) return;
-                  try {
-                    setUi((u) => ({ ...u, genLoading: true }));
-                    setOverlay({ visible: true, message: 'Generating details…' });
-
-                    const res = await generateFacts({
-                      plantsTableId: plant.plantsTableId,
-                      commonName: plant.commonName || plant.displayName,
-                      scientificName: plant.scientific,
-                    });
-
-                    setOverlay({ visible: true, message: 'Saving updates…' });
-
-                    if (res) {
-                      setPlant((p) => ({
-                        ...p,
-                        description: res.description,
-                        availability: res.availability_status as Availability,
-                        rarity: res.rarity_level as Rarity,
-                      }));
-                    }
-
-                    await fetchPlantDetails(currentCandidate.scientificName);
-
-                    setOverlay({ visible: true, message: 'Done' });
-                    setTimeout(() => setOverlay({ visible: false, message: '' }), 500);
-
-                    // Offer to adopt suggested common name
-                    await maybeApplySuggestedCommonName(res?.suggested_common_name);
-                  } catch (e: any) {
-                    setOverlay({ visible: false, message: '' });
-                    Alert.alert('Generation failed', e?.message ?? 'Please try again.');
-                  } finally {
-                    setUi((u) => ({ ...u, genLoading: false }));
-                  }
-                }}
-              />
             </ThemedView>
 
             <AboutBox title="About Plant" body={plant.description} />
@@ -837,7 +794,6 @@ export default function PlantIdentificationResultScreen() {
                 onPrune={() => {}}
                 onObserve={() => {}}
                 showActionButtons={false}
-                onCareProgress={handleCareProgress}
               />
                 {/* Soil Description */}
                 {plant.soilDescription && (
@@ -976,6 +932,55 @@ export default function PlantIdentificationResultScreen() {
             setModals((m: any) => ({ ...m, confirmName: { open: false, suggested: null } }));
           }
         }}
+      />
+
+      <PlantDataGenerationModal
+        visible={validationResult.showModal}
+        onClose={() => {
+          setUserDeclinedUpdate(true);
+          hideModal();
+        }}
+        onGenerate={async () => {
+          if (!plant.plantsTableId) return;
+          
+          try {
+            const res = await generatePlantData({
+              plantsTableId: plant.plantsTableId,
+              commonName: plant.commonName || plant.displayName,
+              scientificName: plant.scientific,
+            });
+
+            if (res) {
+              // Optimistically update the plant state with generated data
+              setPlant(prev => ({
+                ...prev,
+                description: res.description || prev.description,
+                availability: res.availability_status as Availability || prev.availability,
+                rarity: res.rarity_level as Rarity || prev.rarity,
+                propagationMethods: res.propagation_techniques || prev.propagationMethods,
+              }));
+              
+              // Refresh in background to ensure database consistency
+              setTimeout(() => { void fetchPlantDetails(currentCandidate.scientificName); }, 1000);
+              
+              // Check if there's a suggested common name to update
+              if (res.suggested_common_name) {
+                await maybeApplySuggestedCommonName(res.suggested_common_name);
+              }
+            }
+            
+            // Hide modal after successful generation
+            setUserDeclinedUpdate(false);
+            hideModal();
+          } catch (e: any) {
+            Alert.alert('Generation failed', e?.message ?? 'Could not generate plant data.');
+            // Still hide modal on error so user can try again
+            hideModal();
+          }
+        }}
+        loading={genLoading}
+        progressEvents={progressEvents}
+        isFirstTime={validationResult.missingFacts.length > 0 && validationResult.missingCare.length > 0}
       />
 
       {/* Floating Add to Collection Button */}

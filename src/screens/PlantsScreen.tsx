@@ -12,6 +12,8 @@ import { type Plant } from '@/types/plant';
 import { useTheme } from '@/context/themeContext';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import SkeletonTile from '@/components/SkeletonTile'; // ⬅️ NEW
+import { IconSymbol } from '@/components/ui/icon-symbol';
+import PlantGallery from '@/components/PlantGallery';
 
 type JoinedPhotoRow = { id: string; bucket: string; object_path: string };
 
@@ -42,6 +44,20 @@ export default function PlantsScreen() {
   const [refreshing, setRefreshing] = useState(false); // ⬅️ for pull-to-refresh
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
+  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+  const [gridSize, setGridSize] = useState<'small' | 'medium'>('medium');
+  const [sizeDropdownOpen, setSizeDropdownOpen] = useState(false);
+
+  const getCardContainerStyle = () => {
+    switch (gridSize) {
+      case 'small':
+        return { width: '30%' as const }; // 3 columns
+      case 'medium':
+        return { width: '47%' as const }; // 2 columns
+      default:
+        return { width: '47%' as const };
+    }
+  };
 
   const fetchPlants = useCallback(async () => {
     if (!user?.id) return;
@@ -258,54 +274,28 @@ export default function PlantsScreen() {
         refreshing={refreshing}
         onRefresh={onRefresh}
       >
-        <ThemedView style={styles.titleContainer}>
-          <ThemedText type="title">Plants</ThemedText>
-        </ThemedView>
+        <PlantGallery
+          title="Plants"
+          plants={plants}
+          loading={loading}
+          error={error}
+          refreshing={refreshing}     // used by parent scroll view already
+          onRefresh={onRefresh}        // ditto (kept for API symmetry)
 
-        <View style={{ marginTop: 8 }}>
-          <TextInput
-            value={search}
-            onChangeText={setSearch}
-            placeholder="Search nickname or species..."
-            placeholderTextColor={theme.colors.mutedText}
-            style={[styles.searchInput, { backgroundColor: theme.colors.input, borderColor: theme.colors.border, color: theme.colors.text }]}
-            autoCapitalize="none"
-            autoCorrect={false}
-            clearButtonMode="while-editing"
-          />
-        </View>
+          // show/hide controls
+          enableSearch={true}
+          enableViewToggle={true}
 
-        {loading ? (
-          // skeleton grid in same layout as your cards
-          <View style={styles.grid}>
-            {Array.from({ length: 6 }).map((_, i) => (
-              <View key={`sk-${i}`} style={styles.cardContainer}>
-                <SkeletonTile style={{ aspectRatio: 1, width: '100%' }} />
-                <View style={{ height: 8 }} />
-                <SkeletonTile style={{ height: 16, width: '70%' }} rounded={6} />
-                <View style={{ height: 6 }} />
-                <SkeletonTile style={{ height: 14, width: '50%' }} rounded={6} />
-              </View>
-            ))}
-          </View>
-        ) : error ? (
-          <ThemedText>{error}</ThemedText>
-        ) : plants.length === 0 ? (
-          <ThemedText>No plants yet.</ThemedText>
-        ) : (
-          <View style={styles.grid}>
-            {plants.map((item) => (
-              <View key={item.id} style={styles.cardContainer}>
-                <FavoritePlantCard
-                  plant={item}
-                  onPress={() =>
-                    (nav as any).navigate('PlantDetail', { id: item.id })
-                  }
-                />
-              </View>
-            ))}
-          </View>
-        )}
+          // default layout: 'gridsmall' | 'gridmed' | 'list'
+          defaultLayout="gridmed"
+
+          // search wired to your server-side filtering
+          searchValue={search}
+          onSearchChange={setSearch}
+
+          // navigate on item press
+          onItemPress={(p) => (nav as any).navigate('PlantDetail', { id: p.id })}
+        />
       </ParallaxScrollView>
 
       <TouchableOpacity
@@ -334,12 +324,63 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
   },
+  viewToggle: {
+    flexDirection: 'row',
+    gap: 4,
+  },
+  toggleButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  gridButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+    gap: 4,
+    minWidth: 36,
+    height: 36,
+    justifyContent: 'center',
+  },
+  sizeLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  sizeDropdown: {
+    position: 'absolute',
+    top: 60,
+    right: 16,
+    zIndex: 100,
+    borderRadius: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+    minWidth: 120,
+    overflow: 'hidden',
+  },
+  sizeDropdownItem: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  sizeDropdownText: {
+    fontSize: 14,
+    fontWeight: '500',
+  },
   grid: {
     paddingTop: 4,
     paddingBottom: 16,
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 12,
+  },
+  list: {
+    paddingTop: 4,
+    paddingBottom: 16,
+    gap: 8,
   },
   searchInput: {
     borderWidth: StyleSheet.hairlineWidth,
@@ -350,6 +391,42 @@ const styles = StyleSheet.create({
   cardContainer: {
     flexBasis: '48%',
     flexGrow: 1,
+  },
+  listItemContainer: {
+    width: '100%',
+  },
+  listItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(0,0,0,0.1)',
+    backgroundColor: 'rgba(0,0,0,0.05)',
+  },
+  listItemImage: {
+    width: 60,
+    height: 60,
+    borderRadius: 8,
+  },
+  listItemContent: {
+    flex: 1,
+    marginLeft: 12,
+  },
+  listItemName: {
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  listItemScientific: {
+    fontSize: 14,
+    opacity: 0.7,
+    fontStyle: 'italic',
+  },
+  listItemSkeleton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
   },
   headerImage: {
     width: '100%',

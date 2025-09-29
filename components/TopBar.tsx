@@ -11,6 +11,8 @@ export default function TopBar({
   onToggleFavorite,
   onToggleMenu,
   hideActions,
+  showUpdateButton,
+  onUpdate,
 }: {
   title: string;
   isFavorite: boolean;
@@ -18,6 +20,8 @@ export default function TopBar({
   onToggleFavorite: () => void;
   onToggleMenu: () => void;
   hideActions?: boolean;
+  showUpdateButton?: boolean;
+  onUpdate?: () => void;
 }) {
   const { theme } = useTheme();
   return (
@@ -32,6 +36,16 @@ export default function TopBar({
       </View>
       {!hideActions && (
         <View style={styles.rightGroup}>
+          {showUpdateButton && (
+            <TouchableOpacity
+              accessibilityRole="button"
+              accessibilityLabel="Update plant data"
+              onPress={onUpdate}
+              style={styles.iconBtn}
+            >
+              <IconSymbol name="arrow.clockwise" color={theme.colors.primary} size={20} />
+            </TouchableOpacity>
+          )}
           <TouchableOpacity
             accessibilityRole="button"
             accessibilityLabel={isFavorite ? 'Unfavorite' : 'Favorite'}
@@ -53,6 +67,6 @@ const styles = StyleSheet.create({
   topBar: { height: 56, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: StyleSheet.hairlineWidth },
   leftGroup: { flexDirection: 'row', alignItems: 'center', flexShrink: 1 },
   iconBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center', marginRight: 4 },
-  rightGroup: { flexDirection: 'row', alignItems: 'center', gap: 2 },
+  rightGroup: { flexDirection: 'row', alignItems: 'center', gap: 0 },
   topTitle: { fontWeight: '600', fontSize: 18, lineHeight: 20, includeFontPadding: false as any, flexShrink: 1, minWidth: 0 },
 });

@@ -61,8 +61,13 @@ export default function AddObserveScreen() {
   const [soilMoisture, setSoilMoisture] = useState('');
   const [soilMoistureOpen, setSoilMoistureOpen] = useState(false);
   const [depthIn, setDepthIn] = useState('');
+  const [isRootbound, setIsRootbound] = useState(false);
   const [isHealthy, setIsHealthy] = useState(true);
   const [damageDesc, setDamageDesc] = useState('');
+  const [pests, setPests] = useState('Clean');
+  const [pestsOpen, setPestsOpen] = useState(false);
+  const [pestSeverity, setPestSeverity] = useState('Light');
+  const [pestSeverityOpen, setPestSeverityOpen] = useState(false);
   const [tempF, setTempF] = useState('');
   const [rhPct, setRhPct] = useState('');
   const [notes, setNotes] = useState('');
@@ -95,6 +100,7 @@ export default function AddObserveScreen() {
           height_in: parseNum(heightIn),
           width_in: parseNum(widthIn),
           leaf_count: parseNum(leafCount),
+          rootbound: !!isRootbound,
         },
         medium: {
           soil_moisture: soilMoisture || null,
@@ -103,6 +109,8 @@ export default function AddObserveScreen() {
         health: {
           is_healthy: !!isHealthy,
           damage_desc: damageDesc || '—',
+          pests: pests || 'Clean',
+          pest_severity: pests === 'Clean' ? null : (pestSeverity || 'Light'),
         },
         env: {
           temp_f: parseNum(tempF),
@@ -290,6 +298,10 @@ export default function AddObserveScreen() {
               </View>
             </View>
             <LabeledInput label="Depth (in)" value={depthIn} onChangeText={setDepthIn} keyboardType="numeric" placeholder="e.g. 2.0" />
+            <View style={styles.switchRow}>
+              <ThemedText style={styles.label}>Rootbound?</ThemedText>
+              <Switch value={isRootbound} onValueChange={setIsRootbound} />
+            </View>
           </Section>
 
           <Section title="Health">
@@ -298,6 +310,99 @@ export default function AddObserveScreen() {
               <Switch value={isHealthy} onValueChange={setIsHealthy} />
             </View>
             <LabeledInput label="Damage description" value={damageDesc} onChangeText={setDamageDesc} placeholder="—" />
+            
+            <View style={styles.inputGroup}>
+              <ThemedText style={styles.label}>Pests</ThemedText>
+              <View style={{ position: 'relative' }}>
+                <TouchableOpacity
+                  onPress={() => setPestsOpen((o) => !o)}
+                  activeOpacity={0.8}
+                  style={[
+                    styles.dropdownButton,
+                    { borderColor: theme.colors.border, backgroundColor: theme.colors.input }
+                  ]}
+                >
+                  <ThemedText style={{ color: pests ? theme.colors.text : theme.colors.mutedText }}>
+                    {pests || 'Select pest status'}
+                  </ThemedText>
+                  <View style={styles.dropdownIcon}>
+                    <IconSymbol name={pestsOpen ? 'chevron.up' : 'chevron.down'} size={20} color={theme.colors.mutedText} />
+                  </View>
+                </TouchableOpacity>
+                {pestsOpen && (
+                  <View
+                    style={[
+                      styles.dropdownMenu,
+                      { borderColor: theme.colors.border, backgroundColor: theme.colors.card }
+                    ]}
+                  >
+                    {(['Clean', 'Mealybugs', 'Spidermites', 'Fungal Gnats'] as const).map((option) => (
+                      <TouchableOpacity
+                        key={option}
+                        onPress={() => { 
+                          setPests(option); 
+                          setPestsOpen(false);
+                          // Reset severity when changing to Clean
+                          if (option === 'Clean') {
+                            setPestSeverity('Light');
+                          }
+                        }}
+                        style={[
+                          styles.dropdownItem,
+                          { backgroundColor: pests === option ? theme.colors.input : 'transparent' }
+                        ]}
+                      >
+                        <ThemedText style={styles.dropdownItemText}>{option}</ThemedText>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                )}
+              </View>
+            </View>
+
+            {pests !== 'Clean' && (
+              <View style={styles.inputGroup}>
+                <ThemedText style={styles.label}>Pest severity</ThemedText>
+                <View style={{ position: 'relative' }}>
+                  <TouchableOpacity
+                    onPress={() => setPestSeverityOpen((o) => !o)}
+                    activeOpacity={0.8}
+                    style={[
+                      styles.dropdownButton,
+                      { borderColor: theme.colors.border, backgroundColor: theme.colors.input }
+                    ]}
+                  >
+                    <ThemedText style={{ color: pestSeverity ? theme.colors.text : theme.colors.mutedText }}>
+                      {pestSeverity || 'Select severity'}
+                    </ThemedText>
+                    <View style={styles.dropdownIcon}>
+                      <IconSymbol name={pestSeverityOpen ? 'chevron.up' : 'chevron.down'} size={20} color={theme.colors.mutedText} />
+                    </View>
+                  </TouchableOpacity>
+                  {pestSeverityOpen && (
+                    <View
+                      style={[
+                        styles.dropdownMenu,
+                        { borderColor: theme.colors.border, backgroundColor: theme.colors.card }
+                      ]}
+                    >
+                      {(['Light', 'Moderate', 'Severe'] as const).map((option) => (
+                        <TouchableOpacity
+                          key={option}
+                          onPress={() => { setPestSeverity(option); setPestSeverityOpen(false); }}
+                          style={[
+                            styles.dropdownItem,
+                            { backgroundColor: pestSeverity === option ? theme.colors.input : 'transparent' }
+                          ]}
+                        >
+                          <ThemedText style={styles.dropdownItemText}>{option}</ThemedText>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  )}
+                </View>
+              </View>
+            )}
           </Section>
 
           <Section title="Environment">
@@ -369,6 +474,7 @@ const styles = StyleSheet.create({
   section: { marginBottom: 16 },
   sectionTitle: { fontWeight: '700', fontSize: 16, marginBottom: 8 },
   label: { fontSize: 13, opacity: 0.8, marginBottom: 6 },
+  inputGroup: { marginBottom: 8 },
   input: {
     borderWidth: StyleSheet.hairlineWidth,
     borderRadius: 10,
@@ -413,7 +519,6 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
   },
   removeBadgeText: { color: '#fff', fontWeight: '700' },
-  inputGroup: { marginBottom: 8 },
   dropdownButton: {
     borderWidth: StyleSheet.hairlineWidth,
     borderRadius: 10,

@@ -11,9 +11,10 @@ import { supabase } from '@/services/supabaseClient';
 import SkeletonTile from '@/components/SkeletonTile';
 import PlantTimeline from '@/components/PlantTimeline';
 import WaterModal from '@/components/WaterModal';
+import PruneModal from '@/components/PruneModal';
 import ConfirmNameModal from '@/components/ConfirmNameModal';
-import { useGeneratePlantFacts } from '@/hooks/useGeneratePlantFacts';
-import { useGenerateCare } from '@/hooks/useGenerateCare';
+import { useGeneratePlantData } from '@/hooks/generatePlantData';
+import { usePlantDataValidation } from '@/hooks/usePlantDataValidation';
 
 import TopBar from '@/components/TopBar';
 import MenuSheet from '@/components/MenuSheet';
@@ -27,7 +28,7 @@ import LocationModal from '@/components/LocationModal';
 import SoilModal from '@/components/SoilModal';
 import PotDetailsModal from '@/components/PotDetailsModal';
 import { ButtonPill } from '@/components/Buttons';
-import GenerateFactsButton from '@/components/GenerateFactsButton';
+import PlantDataGenerationModal from '@/components/PlantDataGenerationModal';
 
 import { labelAvailability, labelRarity } from '@/utils/labels';
 import type { Availability, Rarity, RouteParams, SoilRowDraft, PotShape } from '@/utils/types';
@@ -55,6 +56,16 @@ export default function PlantDetailScreen() {
     sublabel: undefined,
   });
 
+  const [optimisticCare, setOptimisticCare] = useState<{
+    care_light?: string | null;
+    care_water?: string | null;
+    care_temp_humidity?: string | null;
+    care_fertilizer?: string | null;
+    care_pruning?: string | null;
+    soil_description?: string | null;
+    propagation_methods?: { method: string; difficulty?: string | null; description?: string | null }[];
+  } | null>(null);
+
   const [status, setStatus] = useState({ loading: true, error: null as string | null });
 
   const [plant, setPlant] = useState({
@@ -79,6 +90,7 @@ export default function PlantDetailScreen() {
   // Modals/drafts
   const [modals, setModals] = useState({
     water: false,
+    prune: false,
     location: false,
     soil: false,
     pot: false as boolean,
@@ -94,11 +106,13 @@ export default function PlantDetailScreen() {
   // Debounce ref for favorite
   const favTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const { loading: genFactsLoading, run: generateFacts } = useGeneratePlantFacts();
-  const { loading: genCareLoading,  run: generateCare  } = useGenerateCare();
-  const genLoading = ui.genLoading || genFactsLoading || genCareLoading;
+  const { loading: genLoading, data: genData, error: genError, progressEvents, run: generatePlantData } = useGeneratePlantData();
+  const { validationResult, validatePlantData, hideModal } = usePlantDataValidation();
+  
+  // Track if user declined the update modal
+  const [userDeclinedUpdate, setUserDeclinedUpdate] = useState(false);
 
-    // ---- Progress wiring (same shape CareSection emits) ----
+  // ---- Progress wiring (same shape CareSection emits) ----
   type StageKey =
     | 'db_read'
     | 'profile'
@@ -145,7 +159,6 @@ export default function PlantDetailScreen() {
     db_write: 'Saving updates',
     done: 'Finished',
   };
-
 
   const rarityLabel = useMemo(() => labelRarity(plant.rarity), [plant.rarity]);
   const availabilityLabel = useMemo(() => labelAvailability(plant.availability), [plant.availability]);
@@ -222,8 +235,8 @@ export default function PlantDetailScreen() {
       let commonName = '';
       let scientific = '';
       let description = '';
-      let availability: Availability = '';
-      let rarity: Rarity = '';
+      let availability: Availability = '' as Availability;
+      let rarity: Rarity = '' as Rarity;
 
       let plantRow: any = null;
       if (up.plants_table_id) {
@@ -241,27 +254,43 @@ export default function PlantDetailScreen() {
         rarity = (plantRow?.rarity as any) || '';
       }
 
-      setPlant({
-        headerUrl: hero,
-        displayName: nickname || 'My Plant',
-        commonName: commonName || '',
-        scientific,
-        description,
-        availability,
-        rarity,
+      // IMPORTANT: merge DB with existing (optimistic) state so optimistic wins
+      setPlant((prev) => ({
+        ...prev,
+        headerUrl: hero || prev.headerUrl,
+        displayName: nickname || prev.displayName || 'My Plant',
+        commonName: commonName || prev.commonName || '',
+        scientific: scientific || prev.scientific,
+        description: description || prev.description,
+        availability: (availability as Availability) || prev.availability,
+        rarity: (rarity as Rarity) || prev.rarity,
         isFavorite: !!up.favorite,
-        location: up.location ?? '',
-        plantsTableId: up.plants_table_id ?? null,
+        location: up.location ?? prev.location,
+        plantsTableId: up.plants_table_id ?? prev.plantsTableId,
         pot: {
-          type: up.pot_type ?? '',
-          heightIn: typeof up.pot_height_in === 'number' ? up.pot_height_in : up.pot_height_in ? Number(up.pot_height_in) : null,
-          diameterIn: typeof up.pot_diameter_in === 'number' ? up.pot_diameter_in : up.pot_diameter_in ? Number(up.pot_diameter_in) : null,
-          drainage: up.drainage_system ?? '',
+          type: up.pot_type ?? prev.pot.type,
+          heightIn:
+            typeof up.pot_height_in === 'number'
+              ? up.pot_height_in
+              : up.pot_height_in
+              ? Number(up.pot_height_in)
+              : prev.pot.heightIn,
+          diameterIn:
+            typeof up.pot_diameter_in === 'number'
+              ? up.pot_diameter_in
+              : up.pot_diameter_in
+              ? Number(up.pot_diameter_in)
+              : prev.pot.diameterIn,
+          drainage: up.drainage_system ?? prev.pot.drainage,
         },
-        soilMix: (up as any).soil_mix ?? null,
-        soilDescription: (plantRow as any)?.soil_description ?? null,
-        propagationMethods: ((plantRow as any)?.propagation_methods_json ?? []) as any[],
-      });
+        soilMix: (up as any).soil_mix ?? prev.soilMix,
+        // prefer optimistic environment/propagation; DB will naturally win on later refresh once it has new content
+        soilDescription: (plantRow as any)?.soil_description ?? prev.soilDescription,
+        propagationMethods:
+          ((plantRow as any)?.propagation_methods_json ?? [])?.length
+            ? (plantRow as any).propagation_methods_json
+            : prev.propagationMethods,
+      }));
     } catch (e: any) {
       setStatus({ loading: false, error: e?.message ?? 'Failed to load plant' });
     } finally {
@@ -276,6 +305,13 @@ export default function PlantDetailScreen() {
     return () => { if (favTimerRef.current) clearTimeout(favTimerRef.current); };
   }, [fetchDetails]);
 
+  // Validate plant data when plant is loaded
+  useEffect(() => {
+    if (plant.plantsTableId && !status.loading) {
+      validatePlantData(plant.plantsTableId);
+    }
+  }, [plant.plantsTableId, status.loading, validatePlantData]);
+
   const onRefresh = useCallback(() => {
     setUi((u) => ({ ...u, refreshing: true }));
     fetchDetails(true);
@@ -288,24 +324,6 @@ export default function PlantDetailScreen() {
   const showOverlay = (message: string) => setOverlay({ visible: true, message });
   const hideOverlay = () => setOverlay({ visible: false, message: '', percent: undefined, sublabel: undefined });
 
-  const handleCareProgress = useCallback((evt: ProgressEvent) => {
-    const label = STAGE_LABELS[evt.key] ?? evt.label ?? 'Working…';
-    const percent = calcPercent(evt.key);
-
-    if (evt.status === 'error') {
-      hideOverlay();
-      Alert.alert('Generation failed', evt.error || 'Please try again.');
-      return;
-    }
-
-    setOverlay({ visible: true, message: 'Generating care…', percent, sublabel: label });
-
-    if (evt.key === 'done' && evt.status === 'success') {
-      // optional: refresh details after save
-      fetchDetails(true);
-      setTimeout(hideOverlay, 400);
-    }
-  }, [fetchDetails]);
 
   const maybeApplySuggestedCommonName = useCallback(async (suggested?: string | null) => {
     if (!suggested || !suggested.trim() || !plant.plantsTableId) return;
@@ -421,6 +439,14 @@ export default function PlantDetailScreen() {
         onBack={() => (nav as any).navigate('MainTabs', { screen: 'MyPlants' })}
         onToggleFavorite={toggleFavorite}
         onToggleMenu={() => setUi((u) => ({ ...u, menuOpen: !u.menuOpen }))}
+        showUpdateButton={userDeclinedUpdate && validationResult.needsGeneration}
+        onUpdate={() => {
+          setUserDeclinedUpdate(false);
+          // Re-trigger validation to show the modal
+          if (plant.plantsTableId) {
+            validatePlantData(plant.plantsTableId);
+          }
+        }}
       />
 
       {ui.menuOpen && (
@@ -491,47 +517,6 @@ export default function PlantDetailScreen() {
               )}
               <CompactStatus rarity={availabilityLabel ? rarityLabel : ''} availability={availabilityLabel} />
 
-              <GenerateFactsButton
-                label={genLoading ? 'Generating…' : 'Generate Facts'}
-                disabled={genLoading || !plant.plantsTableId}
-                onPress={async () => {
-                  if (!plant.plantsTableId) return;
-                  try {
-                    setUi((u) => ({ ...u, genLoading: true }));
-                    setOverlay({ visible: true, message: 'Generating details…' });
-
-                    const res = await generateFacts({
-                      plantsTableId: plant.plantsTableId,
-                      commonName: plant.commonName || plant.displayName,
-                      scientificName: plant.scientific,
-                    });
-
-                    setOverlay({ visible: true, message: 'Saving updates…' });
-
-                    if (res) {
-                      setPlant((p) => ({
-                        ...p,
-                        description: res.description,
-                        availability: res.availability_status as Availability,
-                        rarity: res.rarity_level as Rarity,
-                      }));
-                    }
-
-                    await fetchDetails(true);
-
-                    setOverlay({ visible: true, message: 'Done' });
-                    setTimeout(() => setOverlay({ visible: false, message: '' }), 500);
-
-                    // Offer to adopt suggested common name
-                    await maybeApplySuggestedCommonName(res?.suggested_common_name);
-                  } catch (e: any) {
-                    setOverlay({ visible: false, message: '' });
-                    Alert.alert('Generation failed', e?.message ?? 'Please try again.');
-                  } finally {
-                    setUi((u) => ({ ...u, genLoading: false }));
-                  }
-                }}
-              />
             </ThemedView>
 
             <AboutBox title="About Plant" body={plant.description} />
@@ -549,9 +534,9 @@ export default function PlantDetailScreen() {
                   onRefetch={() => fetchDetails(true)}
                   onWater={() => setModals((m) => ({ ...m, water: true }))}   // <— opens WaterModal
                   onFertilize={() => {}}
-                  onPrune={() => {}}
+                  onPrune={() => setModals((m) => ({ ...m, prune: true }))}
                   onObserve={() => (nav as any).navigate('Observe', { id })}
-                  onCareProgress={handleCareProgress}
+                  optimisticCare={optimisticCare}
                 />
               </Section>
 
@@ -715,6 +700,7 @@ export default function PlantDetailScreen() {
 
       {/* Modals */}
       <WaterModal open={modals.water} onClose={() => setModals((m) => ({ ...m, water: false }))} userPlantId={id} onSaved={() => setUi((u) => ({ ...u, timelineKey: u.timelineKey + 1 }))} />
+      <PruneModal open={modals.prune} onClose={() => setModals((m) => ({ ...m, prune: false }))} userPlantId={id} onSaved={() => setUi((u) => ({ ...u, timelineKey: u.timelineKey + 1 }))} />
       <ConfirmNameModal
         open={(modals as any).confirmName?.open}
         suggested={(modals as any).confirmName?.suggested ?? null}
@@ -764,6 +750,65 @@ export default function PlantDetailScreen() {
         setNote={(t) => setDrafts((d) => ({ ...d, potNote: t }))}
         onCancel={() => setModals((m) => ({ ...m, pot: false }))}
         onSave={savePot}
+      />
+
+      <PlantDataGenerationModal
+        visible={validationResult.showModal}
+        onClose={() => {
+          setUserDeclinedUpdate(true);
+          hideModal();
+        }}
+        onGenerate={async () => {
+          if (!plant.plantsTableId) return;
+          
+          try {
+            const res = await generatePlantData({
+              plantsTableId: plant.plantsTableId,
+              commonName: plant.commonName || plant.displayName,
+              scientificName: plant.scientific,
+            });
+
+            if (res) {
+              // Optimistically update the plant state with generated data
+              setPlant(prev => ({
+                ...prev,
+                description: res.description || prev.description,
+                availability: res.availability_status as Availability || prev.availability,
+                rarity: res.rarity_level as Rarity || prev.rarity,
+                propagationMethods: res.propagation_techniques || prev.propagationMethods,
+              }));
+              
+              // Update care data in optimisticCare state
+              setOptimisticCare(prev => ({
+                ...prev,
+                care_light: res.care_light || prev?.care_light,
+                care_water: res.care_water || prev?.care_water,
+                care_temp_humidity: res.care_temp_humidity || prev?.care_temp_humidity,
+                care_fertilizer: res.care_fertilizer || prev?.care_fertilizer,
+                care_pruning: res.care_pruning || prev?.care_pruning,
+                soil_description: res.soil_description || prev?.soil_description,
+                propagation_methods: res.propagation_techniques || prev?.propagation_methods,
+              }));
+              
+              // Refresh in background to ensure database consistency
+              setTimeout(() => { void fetchDetails(true); }, 1000);
+              
+              // Suggested name offer
+              if (res.suggested_common_name) {
+                await maybeApplySuggestedCommonName(res.suggested_common_name);
+              }
+            }
+            
+            setUserDeclinedUpdate(false);
+            hideModal();
+          } catch (e: any) {
+            Alert.alert('Generation failed', e?.message ?? 'Could not generate plant data.');
+            hideModal();
+          }
+        }}
+        loading={genLoading}
+        progressEvents={progressEvents}
+        isFirstTime={validationResult.missingFacts.length > 0 && validationResult.missingCare.length > 0}
       />
     </View>
   );

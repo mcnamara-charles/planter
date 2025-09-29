@@ -173,9 +173,19 @@ const EVENT_MAP: Record<string, EventConfig> = {
     chips: (e) => {
       const d = e.event_data || {};
       const chips: string[] = [];
-      if (d.parts) chips.push(String(d.parts));
-      if (d.count) chips.push(`${d.count} cuts`);
+      if (d.leaves_cut) chips.push(`${d.leaves_cut} leaves cut`);
       return chips;
+    },
+    renderExtra: (e) => {
+      const d = e.event_data || {};
+      if (d.reason) {
+        return (
+          <ThemedText style={{ fontSize: 14, lineHeight: 20, marginTop: 8, opacity: 0.8 }}>
+            {d.reason}
+          </ThemedText>
+        );
+      }
+      return null;
     },
   },
   soil_changed: {

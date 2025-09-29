@@ -15,9 +15,11 @@ type Plant = {
 
 export default function FavoritePlantCard({
   plant,
+  size = 'medium',
   onPress,
 }: {
   plant: Plant;
+  size?: 'small' | 'medium';
   onPress?: () => void;
 }) {
   // Show skeleton only if we actually expect an image
@@ -30,6 +32,29 @@ export default function FavoritePlantCard({
     return { uri: plant.imageUri };
   }, [plant.imageUri]);
 
+  const getTitleStyle = () => {
+    switch (size) {
+      case 'small':
+        return { fontSize: 10, lineHeight: 14 }; // Smaller for 3-column layout
+      case 'medium':
+        return { fontSize: 14, lineHeight: 16 }; // Medium for 2-column layout
+      default:
+        return { fontSize: 12, lineHeight: 16 };
+    }
+  };
+
+  const getSubtitleStyle = () => {
+    switch (size) {
+      case 'small':
+        return { fontSize: 8, lineHeight: 12 }; // Smaller for 3-column layout
+      case 'medium':
+        return { fontSize: 12, lineHeight: 14 }; // Medium for 2-column layout
+      default:
+        return { fontSize: 10, lineHeight: 14 };
+    }
+  };
+
+  // Standard vertical layout for small and medium
   return (
     <TouchableOpacity style={styles.card} onPress={onPress} activeOpacity={0.85}>
       {/* Media */}
@@ -52,18 +77,18 @@ export default function FavoritePlantCard({
             }}
           />
         ) : (
-          // Fallback if there’s no image or it failed
+          // Fallback if there's no image or it failed
           <View style={styles.mediaFallback} />
         )}
       </View>
 
       {/* Meta */}
       <View style={styles.meta}>
-        <ThemedText style={styles.title} numberOfLines={1}>
+        <ThemedText style={[styles.title, getTitleStyle()]} numberOfLines={1}>
           {plant.name || 'Unnamed Plant'}
         </ThemedText>
         {!!plant.scientificName && (
-          <ThemedText style={styles.subtitle} numberOfLines={1}>
+          <ThemedText style={[styles.subtitle, getSubtitleStyle()]} numberOfLines={1}>
             {plant.scientificName}
           </ThemedText>
         )}
@@ -112,8 +137,6 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
     // tighter stack
     marginTop: 0,
-    fontSize: 12,
-    lineHeight: 14,        // <= tighten line box
     includeFontPadding: false as any, // Android: removes extra top/bottom padding
   },
 });

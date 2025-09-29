@@ -26,6 +26,9 @@ const MAPPING: Record<string, IconDescriptor> = {
   'paperplane.fill': { lib: 'material', name: 'send' },
   'chevron.left': { lib: 'material', name: 'chevron-left' },
   'arrow.left': { lib: 'material', name: 'arrow-back' },
+  'arrow.clockwise': { lib: 'material', name: 'refresh' },
+  grid: { lib: 'material', name: 'grid-view' },
+  list: { lib: 'material', name: 'view-list' },
   leaf: { lib: 'material', name: 'eco' },
   star: { lib: 'material', name: 'star' },
   'chevron.left.forwardslash.chevron.right': { lib: 'material', name: 'code' },
@@ -60,6 +63,10 @@ const MAPPING: Record<string, IconDescriptor> = {
   scissors: { lib: 'material', name: 'content-cut' }, // scissors
   clock: { lib: 'material', name: 'schedule' }, // clock/time
   eye: { lib: 'material', name: 'visibility' }, // eye/observe
+
+  // ---- Dashboard icons ----
+  'exclamationmark.triangle': { lib: 'material', name: 'warning' }, // warning triangle
+  checklist: { lib: 'material', name: 'checklist' }, // checklist
 
   // ---- Entypo addition ----
   // Use this from your app as <IconSymbol name="cycle" />
