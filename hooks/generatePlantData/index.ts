@@ -40,15 +40,22 @@ export function useGeneratePlantData() {
       const needsFacts = !(hasDesc && hasAvail && hasRarity && hasName);
       const needsCare  = !(hasLight && hasWater && hasTemp && hasFert && hasPrune && hasSoil && hasProp);
 
-      // Facts
-      const facts = await generateFacts({
-        plantId: args.plantsTableId,
-        hasDesc, hasAvail, hasRarity, hasName,
-        existing: { description: db?.description ?? '', availability: db?.availability ?? 'unknown', rarity: db?.rarity ?? 'unknown' },
-        commonName: db?.plant_name || args.commonName,
-        scientificName: args.scientificName,
-        stage, onProgress
-      });
+      // Facts (skip all model calls if nothing is needed and nothing is forced)
+      const facts = !(!(hasDesc && hasAvail && hasRarity && hasName))
+        ? { 
+            description: db?.description ?? '',
+            availability_status: (db?.availability ?? 'unknown') as any,
+            rarity_level: (db?.rarity ?? 'unknown') as any,
+            suggested_common_name: null
+          }
+        : await generateFacts({
+            plantId: args.plantsTableId,
+            hasDesc, hasAvail, hasRarity, hasName,
+            existing: { description: db?.description ?? '', availability: db?.availability ?? 'unknown', rarity: db?.rarity ?? 'unknown' },
+            commonName: db?.plant_name || args.commonName,
+            scientificName: args.scientificName,
+            stage, onProgress
+          });
 
       // Care
       let careRes = {

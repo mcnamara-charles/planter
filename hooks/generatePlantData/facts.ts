@@ -44,6 +44,16 @@ export async function generateFacts({
   onProgress?: (e:any)=>void;
 }): Promise<FactsResult> {
   const baseInput = makeInput(existing?.description ? (commonName ?? null) : commonName, scientificName);
+  
+  // Early exit: if everything is present and not forced, skip all model calls
+  if (hasDesc && hasAvail && hasRarity && hasName) {
+    return {
+      description: existing.description || '',
+      availability_status: (existing.availability ?? 'unknown') as Availability,
+      rarity_level: (existing.rarity ?? 'unknown') as Rarity,
+      suggested_common_name: null,
+    };
+  }
 
   const factsResults = await stage('facts_generation','Generating plant facts', async () => {
     const promises: Promise<any>[] = [];
@@ -78,13 +88,10 @@ export async function generateFacts({
     return { nameOnly, meta };
   }, onProgress);
 
-  if (hasDesc && hasAvail && hasRarity && hasName) {
-    return {
-      description: existing.description || '',
-      availability_status: (existing.availability ?? 'unknown') as Availability,
-      rarity_level: (existing.rarity ?? 'unknown') as Rarity,
-      suggested_common_name: factsResults.nameOnly.suggested_common_name ? toTitle(factsResults.nameOnly.suggested_common_name) : null,
-    };
+  // Auto-fill plant_name if empty and we got a name
+  const normalizedName = factsResults.nameOnly?.suggested_common_name ? toTitle(factsResults.nameOnly.suggested_common_name) : null;
+  if (!hasName && normalizedName) {
+    await stage('facts_db_write','Saving plant facts', async () => savePlantsRow(plantId, { plant_name: normalizedName }));
   }
 
   const payload: Record<string, any> = {};
@@ -100,7 +107,7 @@ export async function generateFacts({
     description: factsResults.meta.description,
     availability_status: factsResults.meta.availability_status,
     rarity_level: factsResults.meta.rarity_level,
-    suggested_common_name: factsResults.nameOnly.suggested_common_name ? toTitle(factsResults.nameOnly.suggested_common_name) : null,
+    suggested_common_name: normalizedName,
   };
 }
 

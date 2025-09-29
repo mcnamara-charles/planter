@@ -1,9 +1,8 @@
 // components/PlantDataGenerationModal.tsx
 import React from 'react';
-import { Modal, View, StyleSheet, ActivityIndicator, Pressable, TouchableOpacity } from 'react-native';
+import { Modal, View, StyleSheet, ActivityIndicator, Pressable } from 'react-native';
 import { ThemedText } from '@/components/themed-text';
 import { useTheme } from '@/context/themeContext';
-import { IconSymbol } from '@/components/ui/icon-symbol';
 
 type ProgressEvent = {
   key: string;
@@ -96,43 +95,7 @@ export default function PlantDataGenerationModal({
             </View>
           )}
 
-          <View style={styles.buttonRow}>
-            <TouchableOpacity
-              activeOpacity={0.7}
-              onPress={onClose}
-              disabled={loading}
-              style={[
-                styles.button,
-                styles.secondaryButton,
-                { borderColor: theme.colors.border, backgroundColor: theme.colors.card },
-                loading && { opacity: 0.6 }
-              ]}
-            >
-              <ThemedText style={[styles.buttonLabel, { color: theme.colors.text }]}>
-                Not Now
-              </ThemedText>
-            </TouchableOpacity>
-            
-            <TouchableOpacity
-              activeOpacity={0.7}
-              onPress={onGenerate}
-              disabled={loading}
-              style={[
-                styles.button,
-                styles.primaryButton,
-                {
-                  borderColor: 'rgba(0,0,0,0.15)',
-                  backgroundColor: '#FFFFFF',
-                },
-                loading && { opacity: 0.6 }
-              ]}
-            >
-              <IconSymbol name="openai" size={18} color="#000000" />
-              <ThemedText style={styles.buttonLabel}>
-                {loading ? 'Generating...' : 'Generate Now'}
-              </ThemedText>
-            </TouchableOpacity>
-          </View>
+          {/* Buttons removed for auto-run flow */}
         </View>
       </View>
     </Modal>

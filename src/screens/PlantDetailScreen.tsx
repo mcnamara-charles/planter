@@ -111,6 +111,8 @@ export default function PlantDetailScreen() {
   
   // Track if user declined the update modal
   const [userDeclinedUpdate, setUserDeclinedUpdate] = useState(false);
+  const [autoGenRan, setAutoGenRan] = useState(false);
+  const [genModalVisible, setGenModalVisible] = useState(false);
 
   // ---- Progress wiring (same shape CareSection emits) ----
   type StageKey =
@@ -311,6 +313,54 @@ export default function PlantDetailScreen() {
       validatePlantData(plant.plantsTableId);
     }
   }, [plant.plantsTableId, status.loading, validatePlantData]);
+
+  // Auto-run generation when needed (no user click)
+  useEffect(() => {
+    const shouldRun = !!plant.plantsTableId && validationResult.needsGeneration && !genLoading && !autoGenRan;
+    if (!shouldRun) return;
+    (async () => {
+      try {
+        setGenModalVisible(true);
+        const res = await generatePlantData({
+          plantsTableId: plant.plantsTableId!,
+          commonName: plant.commonName || plant.displayName,
+          scientificName: plant.scientific,
+        });
+        if (res) {
+          setPlant(prev => ({
+            ...prev,
+            description: res.description || prev.description,
+            availability: (res.availability_status as any) || prev.availability,
+            rarity: (res.rarity_level as any) || prev.rarity,
+          }));
+          // Update optimistic care
+          setOptimisticCare(prev => ({
+            ...prev,
+            care_light: res.care_light || (prev?.care_light ?? null),
+            care_water: res.care_water || (prev?.care_water ?? null),
+            care_temp_humidity: res.care_temp_humidity || (prev?.care_temp_humidity ?? null),
+            care_fertilizer: res.care_fertilizer || (prev?.care_fertilizer ?? null),
+            care_pruning: res.care_pruning || (prev?.care_pruning ?? null),
+            soil_description: res.soil_description || (prev?.soil_description ?? null),
+            propagation_methods: res.propagation_techniques || (prev?.propagation_methods ?? []),
+          }));
+          // Background refresh
+          setTimeout(() => { void fetchDetails(true); }, 500);
+          if (res.suggested_common_name && plant.plantsTableId) {
+            setModals((m) => ({ ...m, confirmName: { open: true, suggested: res.suggested_common_name! } }));
+          }
+        }
+        setUserDeclinedUpdate(false);
+        setAutoGenRan(true);
+        hideModal();
+      } catch (e: any) {
+        console.warn('Auto-generation failed', e?.message ?? e);
+        hideModal();
+      } finally {
+        setGenModalVisible(false);
+      }
+    })();
+  }, [validationResult.needsGeneration, plant.plantsTableId, genLoading, autoGenRan, plant.commonName, plant.displayName, plant.scientific, generatePlantData, hideModal, fetchDetails]);
 
   const onRefresh = useCallback(() => {
     setUi((u) => ({ ...u, refreshing: true }));
@@ -753,59 +803,9 @@ export default function PlantDetailScreen() {
       />
 
       <PlantDataGenerationModal
-        visible={validationResult.showModal}
-        onClose={() => {
-          setUserDeclinedUpdate(true);
-          hideModal();
-        }}
-        onGenerate={async () => {
-          if (!plant.plantsTableId) return;
-          
-          try {
-            const res = await generatePlantData({
-              plantsTableId: plant.plantsTableId,
-              commonName: plant.commonName || plant.displayName,
-              scientificName: plant.scientific,
-            });
-
-            if (res) {
-              // Optimistically update the plant state with generated data
-              setPlant(prev => ({
-                ...prev,
-                description: res.description || prev.description,
-                availability: res.availability_status as Availability || prev.availability,
-                rarity: res.rarity_level as Rarity || prev.rarity,
-                propagationMethods: res.propagation_techniques || prev.propagationMethods,
-              }));
-              
-              // Update care data in optimisticCare state
-              setOptimisticCare(prev => ({
-                ...prev,
-                care_light: res.care_light || prev?.care_light,
-                care_water: res.care_water || prev?.care_water,
-                care_temp_humidity: res.care_temp_humidity || prev?.care_temp_humidity,
-                care_fertilizer: res.care_fertilizer || prev?.care_fertilizer,
-                care_pruning: res.care_pruning || prev?.care_pruning,
-                soil_description: res.soil_description || prev?.soil_description,
-                propagation_methods: res.propagation_techniques || prev?.propagation_methods,
-              }));
-              
-              // Refresh in background to ensure database consistency
-              setTimeout(() => { void fetchDetails(true); }, 1000);
-              
-              // Suggested name offer
-              if (res.suggested_common_name) {
-                await maybeApplySuggestedCommonName(res.suggested_common_name);
-              }
-            }
-            
-            setUserDeclinedUpdate(false);
-            hideModal();
-          } catch (e: any) {
-            Alert.alert('Generation failed', e?.message ?? 'Could not generate plant data.');
-            hideModal();
-          }
-        }}
+        visible={genModalVisible}
+        onClose={() => { setGenModalVisible(false); hideModal(); }}
+        onGenerate={() => {}}
         loading={genLoading}
         progressEvents={progressEvents}
         isFirstTime={validationResult.missingFacts.length > 0 && validationResult.missingCare.length > 0}
