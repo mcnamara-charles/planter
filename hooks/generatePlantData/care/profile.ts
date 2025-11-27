@@ -44,14 +44,16 @@ const sharedNameNote =
 const unitsNote =
   'Use U.S. customary units ONLY (inches, °F). Do NOT include metric equivalents or units in parentheses.';
 
-export function profileInstructions() {
-  return [
-    'You are classifying horticultural traits for the EXACT species provided.',
-    sharedNameNote, unitsNote,
-    'If the plant is a succulent (Euphorbia/Kalanchoe/Aloe/Haworthia/Crassula/etc.), prefer light_class=direct_sun or high_light and watering_strategy=soak_and-dry unless the species is explicitly shade-adapted.',
-    'Output JSON ONLY matching the schema.'
-  ].join(' ');
-}
+  export function profileInstructions() {
+    return [
+      'You are classifying horticultural traits for the EXACT species provided.',
+      sharedNameNote, unitsNote,
+      // fixed underscore spelling so it matches the schema enum
+      'If the plant is a succulent (Euphorbia/Kalanchoe/Aloe/Haworthia/Crassula/etc.), prefer light_class=direct_sun or high_light and watering_strategy=soak_and_dry unless the species is explicitly shade-adapted.',
+      'Do NOT include temperature or humidity guidance anywhere. Focus only on light exposure patterns and seasonal light acclimation in summer_note.',
+      'Output JSON ONLY matching the schema.'
+    ].join(' ');
+  }
 
 export function renderLightFromProfile(p0: Profile): string {
   const p = sanitizeProfile(p0);
@@ -63,7 +65,14 @@ export function renderLightFromProfile(p0: Profile): string {
     low:            'Tolerates low light poorly; expect sparse, weak growth.'
   };
   const art = articleFor(p.window_best);
-  const ok  = p.window_ok.length ? `; ${prettyList(p.window_ok)} are acceptable with slower growth` : '';
+  let ok = '';
+  if (p.window_ok.length === 1) {
+    const okAspect = p.window_ok[0];
+    const okArt = articleFor(okAspect);
+    ok = `; ${okArt} ${okAspect}-facing window is acceptable with slower growth`;
+  } else if (p.window_ok.length > 1) {
+    ok = `; ${prettyList(p.window_ok)} are acceptable with slower growth`;
+  }
   const windows = `Indoors, ${art} ${p.window_best}-facing window is best${ok}.`;
   return [desc[p.light_class], windows, p.summer_note].filter(Boolean).join(' ');
 }

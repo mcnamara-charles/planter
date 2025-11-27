@@ -32,6 +32,14 @@ export default function AccountScreen() {
             <IconSymbol name="chevron.right" size={18} color={theme.colors.primary} />
           </TouchableOpacity>
 
+          <TouchableOpacity style={styles.actionRow} onPress={() => nav.navigate('Locations')}>
+            <View style={styles.actionLeft}>
+              <IconSymbol name="location" size={20} color={theme.colors.primary} />
+              <ThemedText style={styles.actionText}>Locations</ThemedText>
+            </View>
+            <IconSymbol name="chevron.right" size={18} color={theme.colors.primary} />
+          </TouchableOpacity>
+
           <TouchableOpacity style={styles.actionRow} onPress={() => {}}>
             <View style={styles.actionLeft}>
               <IconSymbol name="gearshape" size={20} color={theme.colors.primary} />

@@ -1,4 +1,4 @@
-import React, { useCallback, useRef } from 'react';
+import React, { useCallback, useRef, useState, useEffect } from 'react';
 import { NavigationContainer, DarkTheme, DefaultTheme } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -9,11 +9,13 @@ import { useFocusEffect, useRoute, getFocusedRouteNameFromRoute } from '@react-n
 import { useTheme } from '@/context/themeContext';
 import { useAuth } from '@/context/AuthContext';
 import { IconSymbol } from '@/components/ui/icon-symbol';
+import DataSyncScreen from '@/src/screens/DataSyncScreen';
 import HomeScreen from '@/src/screens/HomeScreen';
 import PlantsScreen from '@/src/screens/PlantsScreen';
 import AccountScreen from '@/src/screens/AccountScreen';
 import ProfileScreen from '@/src/screens/ProfileScreen';
 import DiscoverScreen from '@/src/screens/DiscoverScreen';
+import ScheduleScreen from '@/src/screens/ScheduleScreen';
 import SignInScreen from '@/src/screens/SignInScreen';
 import SignUpScreen from '@/src/screens/SignUpScreen';
 import VerifyEmailScreen from '@/src/screens/VerifyEmailScreen';
@@ -28,6 +30,7 @@ import ViewObservationScreen from '@/src/screens/ViewObservationScreen';
 import SickPlantsScreen from '@/src/screens/SickPlantsScreen';
 import ToDoScreen from '@/src/screens/ToDoScreen';
 import InspectionScreen from '@/src/screens/InspectionScreen';
+import LocationsScreen from '@/src/screens/LocationsScreen';
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -123,16 +126,16 @@ function MainTabs({ navigation }: any) {
       />
 
       <Tab.Screen
-        name="Discover"
-        component={DiscoverScreen as any}
+        name="Schedule"
+        component={ScheduleScreen as any}
         options={{
           tabBarIcon: ({ color, size }) => (
-            <IconSymbol name="photo" color={color} size={size} />
+            <IconSymbol name="clock" color={color} size={size} />
           ),
         }}
       />
 
-      {/* Center “Identify” action — mocked */}
+      {/* Center "Identify" action — mocked */}
           <Tab.Screen
         name="Identify"
         component={View as any} // no screen yet, just a placeholder
@@ -163,11 +166,11 @@ function MainTabs({ navigation }: any) {
       />
 
       <Tab.Screen
-        name="Account"
+        name="Settings"
         component={AccountScreen as any}
         options={{
           tabBarIcon: ({ color, size }) => (
-            <IconSymbol name="person.circle" color={color} size={size} />
+            <IconSymbol name="gearshape" color={color} size={size} />
           ),
         }}
       />
@@ -178,6 +181,14 @@ function MainTabs({ navigation }: any) {
 export default function RootNavigator() {
   const { themeName, theme } = useTheme();
   const { user, loading } = useAuth();
+  const [dataSyncComplete, setDataSyncComplete] = useState(false);
+
+  // Reset sync state when user changes
+  useEffect(() => {
+    if (!user) {
+      setDataSyncComplete(false);
+    }
+  }, [user?.id]);
 
   const navTheme = themeName === 'dark' ? DarkTheme : DefaultTheme;
   const navigationTheme = {
@@ -193,6 +204,11 @@ export default function RootNavigator() {
   };
 
   if (loading) return <View style={{ flex: 1, backgroundColor: theme.colors.background }} />;
+
+  // Show DataSyncScreen if user is authenticated but sync hasn't completed
+  if (user && !dataSyncComplete) {
+    return <DataSyncScreen onComplete={() => setDataSyncComplete(true)} />;
+  }
 
   return (
     <NavigationContainer theme={navigationTheme as any}>
@@ -218,6 +234,7 @@ export default function RootNavigator() {
             <Stack.Screen name="SickPlants" component={SickPlantsScreen as any} />
             <Stack.Screen name="ToDo" component={ToDoScreen as any} />
             <Stack.Screen name="Inspection" component={InspectionScreen as any} />
+            <Stack.Screen name="Locations" component={LocationsScreen as any} />
           </>
         )}
       </Stack.Navigator>

@@ -60,9 +60,11 @@ export const SCHEMA_PROFILE = {
           properties:{
             method:{ type:'string', enum:['cuttings','division','leaf','offsets','seed','air_layering'] },
             difficulty:{ type:'string', enum:['easy','moderate','challenging','very_challenging'] },
-            description:{ type:'string', maxLength:500 }
+            description:{ type:'string', maxLength:500 },
+            min_days:{ type:'number', minimum:1, maximum:3650 },
+            max_days:{ type:'number', minimum:1, maximum:3650 }
           },
-          required:['method','difficulty','description']
+          required:['method','difficulty','description','min_days','max_days']
         }
       }
     },

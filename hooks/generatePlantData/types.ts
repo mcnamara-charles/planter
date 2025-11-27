@@ -18,7 +18,7 @@ export type CareResult = {
     care_fertilizer: string;
     care_pruning: string;
     soil_description: string; // ← required
-    propagation_techniques: { method: CanonMethod; difficulty: Difficulty; description: string }[]; // ← required
+    propagation_techniques: { method: CanonMethod; difficulty: Difficulty; description: string; min_days: number; max_days: number }[]; // ← required
 };
 
 export type CareFragment = {
@@ -28,7 +28,7 @@ export type CareFragment = {
     care_fertilizer?: string;
     care_pruning?: string;
     soil_description?: string;
-    propagation_techniques?: { method: CanonMethod; difficulty: Difficulty; description: string }[];
+    propagation_techniques?: { method: CanonMethod; difficulty: Difficulty; description: string; min_days: number; max_days: number }[];
   };
 
   export type CareResultView = {
@@ -38,24 +38,37 @@ export type CareFragment = {
     care_fertilizer: string;
     care_pruning: string;
     soil_description: string;
-    propagation_techniques: { method: CanonMethod; difficulty: Difficulty; description: string }[];
+    propagation_techniques: { method: CanonMethod; difficulty: Difficulty; description: string; min_days: number; max_days: number }[];
   };
 
-export type RowShape = {
-  id: string;
-  plant_name: string | null;
-  description: string | null;
-  availability: Availability | null;
-  rarity: Rarity | null;
-  care_light: string | null;
-  care_water: string | null;
-  care_temp_humidity: string | null;
-  care_fertilizer: string | null;
-  care_pruning: string | null;
-  soil_description: string | null;
-  propagation_methods_json: { method: CanonMethod; difficulty: Difficulty; description: string }[] | null;
-  data_response_version: number | null;
-};
+  export type RowShape = {
+    id: string;
+    plant_name: string | null;
+    description: string | null;
+    availability: 'unknown' | 'not_in_trade' | 'rarely_available' | 'seasonal' | 'commonly_available' | null;
+    rarity: 'unknown' | 'common' | 'uncommon' | 'rare' | 'very_rare' | 'ultra_rare' | null;
+  
+    care_light: string | null;
+    care_water: string | null;
+    care_temp_humidity: string | null;
+    care_fertilizer: string | null;
+    care_pruning: string | null;
+    soil_description: string | null;
+    propagation_methods_json: {
+      method: CanonMethod; difficulty: Difficulty; description: string; min_days: number; max_days: number
+    }[] | null;
+  
+    // ⬇️ NEW schedule columns (types match your DB: dates as strings from Supabase)
+    schedule_same_year_round: boolean | null;
+    active_season_start_date: string | null; // '2000-MM-DD'
+    active_season_end_date: string | null;   // '2000-MM-DD'
+    water_interval_days_active: number | null;
+    water_interval_days_inactive: number | null;
+    fert_interval_days_active: number | null;
+    fert_interval_days_inactive: number | null;
+  
+    data_response_version: number | null;
+  };
 
 export type CombinedResult = FactsResult & CareResult;
 
@@ -70,7 +83,9 @@ export type StageKey =
   | 'stage1_parallel' | 'stage2_light' | 'stage3_water'
   | 'profile' | 'care_light' | 'care_water' | 'care_temp_humidity'
   | 'care_fertilizer' | 'care_pruning' | 'care_soil_description'
-  | 'care_propagation' | 'care_db_write' | 'done';
+  | 'care_propagation' | 'care_db_write'
+  | 'schedule_generation' | 'schedule_db_write'  // ⟵ add
+  | 'done';
 
 export type ProgressStatus = 'pending' | 'running' | 'success' | 'error';
 

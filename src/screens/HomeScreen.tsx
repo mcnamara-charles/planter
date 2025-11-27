@@ -1,4 +1,5 @@
 import { Image } from 'expo-image';
+import React from 'react';
 import { StyleSheet, View, TouchableOpacity } from 'react-native';
 
 import ParallaxScrollView from '@/components/parallax-scroll-view';

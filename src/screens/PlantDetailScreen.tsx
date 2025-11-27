@@ -11,6 +11,7 @@ import { supabase } from '@/services/supabaseClient';
 import SkeletonTile from '@/components/SkeletonTile';
 import PlantTimeline from '@/components/PlantTimeline';
 import WaterModal from '@/components/WaterModal';
+import FertilizeModal from '@/components/FertilizeModal';
 import PruneModal from '@/components/PruneModal';
 import ConfirmNameModal from '@/components/ConfirmNameModal';
 import { useGeneratePlantData } from '@/hooks/generatePlantData';
@@ -63,7 +64,7 @@ export default function PlantDetailScreen() {
     care_fertilizer?: string | null;
     care_pruning?: string | null;
     soil_description?: string | null;
-    propagation_methods?: { method: string; difficulty?: string | null; description?: string | null }[];
+    propagation_methods?: { method: string; difficulty?: string | null; description?: string | null; min_days?: number; max_days?: number }[];
   } | null>(null);
 
   const [status, setStatus] = useState({ loading: true, error: null as string | null });
@@ -84,12 +85,13 @@ export default function PlantDetailScreen() {
     pot: { type: '', heightIn: null as number | null, diameterIn: null as number | null, drainage: '' } as PotShape,
     soilMix: null as Record<string, number> | null,
     soilDescription: null as string | null,
-    propagationMethods: [] as { method: string; difficulty?: string | null; description?: string | null }[],
+    propagationMethods: [] as { method: string; difficulty?: string | null; description?: string | null; min_days?: number; max_days?: number }[],
   });
 
   // Modals/drafts
   const [modals, setModals] = useState({
     water: false,
+    fertilize: false,
     prune: false,
     location: false,
     soil: false,
@@ -107,7 +109,7 @@ export default function PlantDetailScreen() {
   const favTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const { loading: genLoading, data: genData, error: genError, progressEvents, run: generatePlantData } = useGeneratePlantData();
-  const { validationResult, validatePlantData, hideModal } = usePlantDataValidation();
+  const { validationResult, validatePlantData, hideModal, resetValidation } = usePlantDataValidation();
   
   // Track if user declined the update modal
   const [userDeclinedUpdate, setUserDeclinedUpdate] = useState(false);
@@ -188,6 +190,8 @@ export default function PlantDetailScreen() {
       const onBack = () => {
         if (overlay.visible) { setOverlay({ visible: false, message: '' }); return true; }
         if (modals.water) { setModals((m) => ({ ...m, water: false })); return true; }
+        if (modals.fertilize) { setModals((m) => ({ ...m, fertilize: false })); return true; }
+        if (modals.prune) { setModals((m) => ({ ...m, prune: false })); return true; }
         if (modals.location) { setModals((m) => ({ ...m, location: false })); return true; }
         if (modals.soil) { setModals((m) => ({ ...m, soil: false })); return true; }
         if (modals.pot) { setModals((m) => ({ ...m, pot: false })); return true; }
@@ -208,7 +212,7 @@ export default function PlantDetailScreen() {
       const { data: up, error: upErr } = await supabase
         .from('user_plants')
         .select(
-          'id, nickname, plants_table_id, default_plant_photo_id, favorite, location, pot_type, pot_height_in, pot_diameter_in, drainage_system, soil_mix'
+          'id, nickname, plants_table_id, default_plant_photo_id, favorite, location_id, pot_type, pot_height_in, pot_diameter_in, drainage_system, soil_mix, location:location_id (id, name)'
         )
         .eq('id', id)
         .maybeSingle();
@@ -267,7 +271,7 @@ export default function PlantDetailScreen() {
         availability: (availability as Availability) || prev.availability,
         rarity: (rarity as Rarity) || prev.rarity,
         isFavorite: !!up.favorite,
-        location: up.location ?? prev.location,
+        location: (up.location as any)?.name ?? prev.location,
         plantsTableId: up.plants_table_id ?? prev.plantsTableId,
         pot: {
           type: up.pot_type ?? prev.pot.type,
@@ -314,18 +318,31 @@ export default function PlantDetailScreen() {
     }
   }, [plant.plantsTableId, status.loading, validatePlantData]);
 
+  // Reset auto-generation state when plant changes
+  useEffect(() => {
+    setAutoGenRan(false);
+    setUserDeclinedUpdate(false);
+    setGenModalVisible(false);
+    resetValidation();
+  }, [id, resetValidation]);
+
   // Auto-run generation when needed (no user click)
   useEffect(() => {
     const shouldRun = !!plant.plantsTableId && validationResult.needsGeneration && !genLoading && !autoGenRan;
     if (!shouldRun) return;
     (async () => {
+
+      setGenModalVisible(true);
+
       try {
-        setGenModalVisible(true);
         const res = await generatePlantData({
           plantsTableId: plant.plantsTableId!,
           commonName: plant.commonName || plant.displayName,
           scientificName: plant.scientific,
         });
+
+        if (!res) throw new Error(genError || 'Generation returned no result');
+
         if (res) {
           setPlant(prev => ({
             ...prev,
@@ -360,7 +377,7 @@ export default function PlantDetailScreen() {
         setGenModalVisible(false);
       }
     })();
-  }, [validationResult.needsGeneration, plant.plantsTableId, genLoading, autoGenRan, plant.commonName, plant.displayName, plant.scientific, generatePlantData, hideModal, fetchDetails]);
+  }, [validationResult.needsGeneration, plant.plantsTableId, genLoading, autoGenRan, plant.commonName, plant.displayName, plant.scientific, generatePlantData, hideModal, fetchDetails, genError]);
 
   const onRefresh = useCallback(() => {
     setUi((u) => ({ ...u, refreshing: true }));
@@ -395,10 +412,43 @@ export default function PlantDetailScreen() {
     const next = drafts.location.trim();
     if (next === prev) { setModals((m) => ({ ...m, location: false })); return; }
     try {
-      const { error: updErr } = await supabase.from('user_plants').update({ location: next || null }).eq('id', id);
+      let locationId = null;
+      
+      // If user entered a location name, find or create the location
+      if (next) {
+        // First, check if location already exists
+        const { data: existingLocation } = await supabase
+          .from('locations')
+          .select('id')
+          .eq('name', next)
+          .eq('owner_id', user?.id)
+          .maybeSingle();
+        
+        if (existingLocation) {
+          locationId = existingLocation.id;
+        } else {
+          // Create new location
+          const { data: newLocation, error: createErr } = await supabase
+            .from('locations')
+            .insert({ name: next, owner_id: user?.id })
+            .select('id')
+            .single();
+          
+          if (createErr) throw createErr;
+          locationId = newLocation.id;
+        }
+      }
+      
+      // Update the user_plants record with the location_id
+      const { error: updErr } = await supabase
+        .from('user_plants')
+        .update({ location_id: locationId })
+        .eq('id', id);
+      
       if (updErr) throw updErr;
       setPlant((p) => ({ ...p, location: next }));
       setModals((m) => ({ ...m, location: false }));
+      
       if (user?.id && prev) {
         await supabase.from('user_plant_timeline_events').insert({
           owner_id: user.id, user_plant_id: id, event_type: 'move', event_data: { from: prev || null, to: next || null }, note: null,
@@ -583,7 +633,7 @@ export default function PlantDetailScreen() {
                   hideOverlay={() => setOverlay({ visible: false, message: '', percent: undefined, sublabel: undefined })}
                   onRefetch={() => fetchDetails(true)}
                   onWater={() => setModals((m) => ({ ...m, water: true }))}   // <— opens WaterModal
-                  onFertilize={() => {}}
+                  onFertilize={() => setModals((m) => ({ ...m, fertilize: true }))}
                   onPrune={() => setModals((m) => ({ ...m, prune: true }))}
                   onObserve={() => (nav as any).navigate('Observe', { id })}
                   optimisticCare={optimisticCare}
@@ -705,6 +755,11 @@ export default function PlantDetailScreen() {
                               </View>
                             </View>
                           </View>
+                          {typeof pm.min_days === 'number' && typeof pm.max_days === 'number' && (
+                            <ThemedText style={{ color: theme.colors.mutedText }}>
+                              Takes between {pm.min_days} and {pm.max_days} days
+                            </ThemedText>
+                          )}
                           {!!pm.description && (
                             <ThemedText style={{ color: theme.colors.mutedText }}>{pm.description}</ThemedText>
                           )}
@@ -749,7 +804,8 @@ export default function PlantDetailScreen() {
       </Modal>
 
       {/* Modals */}
-      <WaterModal open={modals.water} onClose={() => setModals((m) => ({ ...m, water: false }))} userPlantId={id} onSaved={() => setUi((u) => ({ ...u, timelineKey: u.timelineKey + 1 }))} />
+      <WaterModal open={modals.water} onClose={() => setModals((m) => ({ ...m, water: false }))} userPlantIds={[id]} onSaved={() => setUi((u) => ({ ...u, timelineKey: u.timelineKey + 1 }))} />
+      <FertilizeModal open={modals.fertilize} onClose={() => setModals((m) => ({ ...m, fertilize: false }))} userPlantIds={[id]} onSaved={() => setUi((u) => ({ ...u, timelineKey: u.timelineKey + 1 }))} />
       <PruneModal open={modals.prune} onClose={() => setModals((m) => ({ ...m, prune: false }))} userPlantId={id} onSaved={() => setUi((u) => ({ ...u, timelineKey: u.timelineKey + 1 }))} />
       <ConfirmNameModal
         open={(modals as any).confirmName?.open}

@@ -1,0 +1,1892 @@
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  memo,
+} from 'react';
+import {
+  StyleSheet,
+  View,
+  Modal,
+  ActivityIndicator,
+  Pressable,
+} from 'react-native';
+import { Image } from 'expo-image';
+import { ThemedText } from '@/components/themed-text';
+import { ThemedView } from '@/components/themed-view';
+import { useTheme } from '@/context/themeContext';
+import { useAuth } from '@/context/AuthContext';
+import { supabase } from '@/services/supabaseClient';
+import { useRebuildAllWaterSchedules } from '@/hooks/scheduling/useRebuildAllWaterSchedules';
+import { delayScheduleByDays } from '@/services/supabaseSchedules';
+import { useUpdateWaterSchedule, useUpdateFertilizeSchedule } from '@/hooks/scheduling/useUpdateWaterSchedule';
+import SkeletonTile from '@/components/SkeletonTile';
+import { IconSymbol } from '@/components/ui/icon-symbol';
+import ParallaxScrollView from '@/components/parallax-scroll-view';
+import { useNavigation } from '@react-navigation/native';
+import WaterModal from '@/components/WaterModal';
+import FertilizeModal from '@/components/FertilizeModal';
+
+type ScheduleItem = {
+  id: string;
+  userPlantId: string;
+  eventType: string;
+  nextRunAt: string;
+  plantNickname: string;
+  plantName: string;
+  locationId: string | null;
+  locationName: string;
+};
+
+type CombinedSchedule = {
+  userPlantId: string;
+  plantNickname: string;
+  plantName: string;
+  locationId: string | null;
+  locationName: string;
+  schedules: Record<string, ScheduleItem>;
+  earliestNextRunAt: number;
+};
+
+type DelayModalState = {
+  visible: boolean;
+  schedules: ScheduleItem[];
+  selectedEventTypes: Set<string>;
+  mode: 'single' | 'multi';
+  targetUserPlantIds: string[];
+};
+
+type PhotoMeta = { key: string; bucket: string; path: string; userPlantId: string };
+
+/** Exact shape we expect back from the Supabase join */
+type ScheduleQueryRow = {
+  id: string;
+  user_plant_id: string;
+  event_type: string;
+  next_run_at: string;
+  user_plants: {
+    id: string;
+    nickname: string | null;
+    default_plant_photo_id: string | null;
+    plants_table_id: string | null;
+    plants: { plant_name: string | null } | null;
+    location: { id: string; name: string | null } | null;
+  };
+};
+
+const DEBUG_SCHEDULES = true;
+
+function logDebug(...args: any[]) {
+  if (DEBUG_SCHEDULES) console.log('[ScheduleDebug]', ...args);
+}
+
+const SELECTION_BAR_HEIGHT = 64;
+const SELECTION_CHECK_COLOR = '#22C55E';
+
+type EventSummary = {
+  eventType: string;
+  label: string;
+  dateText: string;
+  isToday: boolean;
+  isTomorrow: boolean;
+  backgroundColor: string;
+  textColor: string;
+  pillBackground: string;
+  pillBorderColor: string;
+  pillTextColor: string;
+  combinedText: string;
+  schedule: ScheduleItem | null;
+};
+
+/* ────────────────────────────────────────────────────────────────────────── */
+/* Memoized card                                                             */
+/* ────────────────────────────────────────────────────────────────────────── */
+const CombinedScheduleCard = memo(function CombinedScheduleCard({
+  plantNickname,
+  plantName,
+  imageUrl,
+  cardColor,
+  borderColor,
+  textColor,
+  isExpanded,
+  isSelected,
+  onPress,
+  onLongPress,
+  onInfoPress,
+  onDelayPressPlant,
+  eventSummaries,
+  onCarePress,
+}: {
+  plantNickname: string;
+  plantName: string;
+  imageUrl: string | undefined;
+  cardColor: string;
+  borderColor: string;
+  textColor: string;
+  isExpanded: boolean;
+  isSelected: boolean;
+  onPress: () => void;
+  onLongPress: () => void;
+  onInfoPress: () => void;
+  onDelayPressPlant: () => void;
+  eventSummaries: EventSummary[];
+  onCarePress: (schedule: ScheduleItem) => void;
+}) {
+  const [imageLoaded, setImageLoaded] = useState(false);
+
+  useEffect(() => {
+    setImageLoaded(false);
+  }, [imageUrl]);
+
+  const imageSource = useMemo(
+    () => (imageUrl ? { uri: imageUrl } : undefined),
+    [imageUrl]
+  );
+
+  return (
+    <View style={[
+      styles.cardWrapper,
+      { backgroundColor: cardColor, borderColor, borderRadius: 12 }
+    ]}>
+      <Pressable
+        style={[
+          styles.scheduleCard,
+          isExpanded && styles.scheduleCardExpanded
+        ]}
+        onPress={onPress}
+        onLongPress={onLongPress}
+        delayLongPress={250}
+      >
+        <View style={styles.imageContainer}>
+          {imageUrl === undefined ? (
+            <SkeletonTile style={styles.imageSkeleton} rounded={8} />
+          ) : imageUrl === '' ? (
+            <View
+              style={[styles.imagePlaceholder, { backgroundColor: borderColor }]}
+            >
+              <ThemedText style={styles.imagePlaceholderText}>🌱</ThemedText>
+            </View>
+          ) : (
+            <>
+              {!imageLoaded && (
+                <SkeletonTile style={styles.imageSkeleton} rounded={8} />
+              )}
+              <Image
+                source={imageSource}
+                recyclingKey={plantNickname || plantName}
+                cachePolicy="disk"
+                style={styles.plantImage}
+                contentFit="cover"
+                transition={150}
+                onLoadEnd={() => setImageLoaded(true)}
+              />
+            </>
+          )}
+          {isSelected && (
+            <View style={styles.selectionOverlay} pointerEvents="none">
+              <IconSymbol
+                name="checkmark.circle"
+                size={32}
+                color={SELECTION_CHECK_COLOR}
+              />
+            </View>
+          )}
+        </View>
+
+        <View style={styles.cardContent}>
+          <View style={styles.cardHeader}>
+            <ThemedText style={styles.plantName}>
+              {plantNickname || plantName}
+            </ThemedText>
+          </View>
+          <View style={styles.eventSummaryList}>
+            {eventSummaries.map((summary: EventSummary) => {
+              const {
+                eventType,
+                combinedText,
+                pillBackground,
+                pillBorderColor,
+                pillTextColor,
+              } =
+                summary;
+              return (
+                <View key={eventType} style={styles.eventSummaryRow}>
+                  <View
+                    style={[
+                      styles.duePill,
+                      { backgroundColor: pillBackground, borderColor: pillBorderColor },
+                    ]}
+                  >
+                    <ThemedText
+                      style={[styles.duePillText, { color: pillTextColor }]}
+                    >
+                      {combinedText}
+                    </ThemedText>
+                  </View>
+                </View>
+              );
+            })}
+          </View>
+        </View>
+      </Pressable>
+
+      {isExpanded && (
+        <View style={styles.actionBar}>
+          <Pressable
+            style={styles.actionButton}
+            onPress={onInfoPress}
+          >
+            <IconSymbol name="info.circle" size={24} color={textColor} />
+            <ThemedText style={styles.actionButtonText}>Info</ThemedText>
+          </Pressable>
+
+          <Pressable
+            style={styles.actionButton}
+            onPress={onDelayPressPlant}
+          >
+            <IconSymbol name="clock" size={24} color={textColor} />
+            <ThemedText style={styles.actionButtonText}>Delay</ThemedText>
+          </Pressable>
+
+          {eventSummaries.map((summary: EventSummary) => {
+            const { eventType, label, schedule } = summary;
+            if (!schedule) return null;
+            return (
+              <Pressable
+                key={eventType}
+                style={styles.actionButton}
+                onPress={() => onCarePress(schedule)}
+              >
+                <IconSymbol
+                  name={eventType === 'water' ? 'drop.fill' : 'leaf.fill'}
+                  size={24}
+                  color={textColor}
+                />
+                <ThemedText style={styles.actionButtonText}>
+                  {label}
+                </ThemedText>
+              </Pressable>
+            );
+          })}
+        </View>
+      )}
+    </View>
+  );
+});
+
+export default function ScheduleScreen() {
+  const { theme } = useTheme();
+  const { user } = useAuth();
+  const nav = useNavigation();
+  const { rebuild, loading: rebuilding, doneCount, total } =
+    useRebuildAllWaterSchedules();
+  const { updateOne: updateWaterSchedule } = useUpdateWaterSchedule();
+  const { updateOne: updateFertilizeSchedule } = useUpdateFertilizeSchedule();
+
+  const [schedules, setSchedules] = useState<ScheduleItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [rebuildModalVisible, setRebuildModalVisible] = useState(false);
+  const [openLocations, setOpenLocations] = useState<Record<string, boolean>>(
+    {}
+  );
+  const [expandedCardId, setExpandedCardId] = useState<string | null>(null);
+  const [delayModal, setDelayModal] = useState<DelayModalState>({
+    visible: false,
+    schedules: [],
+    selectedEventTypes: new Set<string>(),
+    mode: 'single',
+    targetUserPlantIds: [],
+  });
+  const [delayDays, setDelayDays] = useState(1);
+  const [waterModalOpen, setWaterModalOpen] = useState(false);
+  const [fertilizeModalOpen, setFertilizeModalOpen] = useState(false);
+  const [selectedUserPlantIds, setSelectedUserPlantIds] = useState<string[]>([]);
+  const [selectedEventType, setSelectedEventType] = useState<
+    'water' | 'fertilize' | ''
+  >('');
+  const [delayingSchedule, setDelayingSchedule] = useState(false);
+
+  // userPlantId -> signed URL (or '' when no photo). undefined = not requested (offscreen)
+  const [imageCache, setImageCache] = useState<Record<string, string>>({});
+  // photoIdOrPath -> signed URL
+  const signedUrlCacheRef = useRef<Record<string, string>>({});
+  // userPlantId -> photoId/path (null means "explicitly no photo"; undefined means "not resolved yet")
+  const photoKeyByUserPlantRef = useRef<
+    Record<string, string | null | undefined>
+  >({});
+  // only start loading images when meta is ready
+  const metaReadyRef = useRef(false);
+
+  const currentUserId = useRef<string | undefined>(undefined);
+  const hasRebuildRun = useRef(false);
+
+
+  /* Single definitions */
+  const today = useMemo(() => {
+    const t = new Date();
+    t.setHours(0, 0, 0, 0);
+    return t;
+  }, []);
+  const tomorrow = useMemo(() => {
+    const n = new Date(today);
+    n.setDate(n.getDate() + 1);
+    return n;
+  }, [today]);
+
+  const dayAfterTomorrow = useMemo(() => {
+    const n = new Date(today);
+    n.setDate(n.getDate() + 2);
+    return n;
+  }, [today]);
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // Data fetch (no images here)
+  // ────────────────────────────────────────────────────────────────────────────
+  const fetchSchedules = useCallback(async () => {
+    if (!user?.id) return;
+    try {
+      setLoading(true);
+      metaReadyRef.current = false;
+  
+      // 0) Get all user_plant ids for the user (ground truth of "your plants")
+      const { data: upRows, count: upCount, error: upErr } = await supabase
+        .from('user_plants')
+        .select('id', { count: 'exact' })
+        .eq('owner_id', user.id)
+        .order('created_at', { ascending: true })
+        .range(0, 9999);
+  
+      if (upErr) throw upErr;
+      const userPlantIds = (upRows ?? []).map(r => r.id);
+      logDebug('user_plants:', { upCount, resolved: userPlantIds.length });
+  
+      // 1A) Original approach: filter by schedules.owner_id
+      const q1 = supabase
+        .from('user_plant_schedules')
+        .select(`
+          id,
+          user_plant_id,
+          event_type,
+          next_run_at,
+          user_plants!inner (
+            id,
+            nickname,
+            default_plant_photo_id,
+            plants_table_id,
+            plants:plants_table_id ( plant_name ),
+            location:location_id ( id, name )
+          )
+        `, { count: 'exact' })
+        .eq('owner_id', user.id)
+        .order('next_run_at', { ascending: true })
+        .range(0, 9999);
+  
+      // 1B) Join-based filter: filter by user_plants.owner_id
+      const q2 = supabase
+        .from('user_plant_schedules')
+        .select(`
+          id,
+          user_plant_id,
+          event_type,
+          next_run_at,
+          user_plants!inner (
+            id,
+            nickname,
+            default_plant_photo_id,
+            plants_table_id,
+            plants:plants_table_id ( plant_name ),
+            location:location_id ( id, name )
+          )
+        `, { count: 'exact' })
+        .eq('user_plants.owner_id', user.id) // <— key difference
+        .order('next_run_at', { ascending: true })
+        .range(0, 9999);
+  
+      // 1C) ID-based filter: schedules where user_plant_id IN (your plants)
+      const q3 = userPlantIds.length
+        ? supabase
+            .from('user_plant_schedules')
+            .select(`
+              id,
+              user_plant_id,
+              event_type,
+              next_run_at,
+              user_plants!inner (
+                id,
+                nickname,
+                default_plant_photo_id,
+                plants_table_id,
+                plants:plants_table_id ( plant_name ),
+                location:location_id ( id, name )
+              )
+            `, { count: 'exact' })
+            .in('user_plant_id', userPlantIds)
+            .order('next_run_at', { ascending: true })
+            .range(0, 9999)
+        : null;
+  
+      const [r1, r2, r3] = await Promise.all([q1, q2, q3 ?? Promise.resolve({ data: null, count: 0, error: null })] as const);
+  
+      const { data: rowsOwner, count: cntOwner, error: errOwner } = r1;
+      const { data: rowsJoin,  count: cntJoin,  error: errJoin  } = r2;
+      const { data: rowsIn,    count: cntIn,    error: errIn    } = r3 as any;
+  
+      if (errOwner || errJoin || errIn) {
+        logDebug('errors', { errOwner, errJoin, errIn });
+        throw (errOwner || errJoin || errIn)!;
+      }
+  
+      // Choose which dataset drives the UI (for now use the JOIN filter; flip if needed)
+      const rows = (rowsJoin ?? []) as any as ScheduleQueryRow[];
+  
+      // ——— Deep debug metrics ———
+      const summarize = (label: string, arr: ScheduleQueryRow[] | null | undefined) => {
+        const list = (arr ?? []) as ScheduleQueryRow[];
+        const n = list.length;
+  
+        const byType: Record<string, number> = {};
+        let nullDates = 0;
+        let minDate: string | null = null;
+        let maxDate: string | null = null;
+  
+        for (const r of list) {
+          byType[r.event_type] = (byType[r.event_type] ?? 0) + 1;
+          if (!r.next_run_at) nullDates++;
+          else {
+            if (!minDate || r.next_run_at < minDate) minDate = r.next_run_at;
+            if (!maxDate || r.next_run_at > maxDate) maxDate = r.next_run_at;
+          }
+        }
+  
+        const upids = new Set(list.map(r => r.user_plant_id));
+        const missingFromUP = userPlantIds.filter(id => !upids.has(id));
+        // show at most a few
+        const sampleMissing = missingFromUP.slice(0, 10);
+  
+        logDebug(`${label} summary`, {
+          count: n,
+          countHeader: (label === 'OWNER') ? cntOwner : (label === 'JOIN') ? cntJoin : cntIn,
+          byType,
+          nullDates,
+          minDate,
+          maxDate,
+          distinctUserPlants: upids.size,
+          sampleMissingUserPlantIds: sampleMissing,
+        });
+      };
+  
+      summarize('OWNER', rowsOwner as any);
+      summarize('JOIN',  rowsJoin  as any);
+      summarize('IN',    rowsIn    as any);
+  
+      // Map rows -> UI items
+      const mapped: ScheduleItem[] = rows.map((row) => ({
+        id: row.id,
+        userPlantId: row.user_plants?.id ?? row.user_plant_id,
+        eventType: row.event_type,
+        nextRunAt: row.next_run_at,
+        plantNickname: row.user_plants?.nickname || '',
+        plantName: row.user_plants?.plants?.plant_name || 'Unknown Plant',
+        locationId: row.user_plants?.location?.id ?? null,
+        locationName: row.user_plants?.location?.name?.trim() || 'No Location',
+      }));
+  
+      // Build photo lookup cache meta
+      const pk: Record<string, string | null> = {};
+      for (const row of rows) {
+        const upid = row.user_plants?.id ?? row.user_plant_id;
+        pk[upid] = row.user_plants?.default_plant_photo_id ?? null;
+      }
+      photoKeyByUserPlantRef.current = pk;
+      metaReadyRef.current = true;
+  
+      // Extra log: final UI list
+      logDebug('UI mapped schedules', { count: mapped.length });
+  
+      setSchedules(mapped);
+    } catch (err) {
+      console.error('Failed to fetch schedules:', err);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, [user?.id]);
+  
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // Lazy image loader - load all images after render
+  // ────────────────────────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!metaReadyRef.current || schedules.length === 0) return;
+
+    const loadAllImages = async () => {
+      const needMetaLookup: string[] = [];
+      const signTargets: PhotoMeta[] = [];
+      const immediateUpdates: Record<string, string> = {};
+
+      const uuidRegex =
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+      for (const schedule of schedules) {
+        const upid = schedule.userPlantId;
+        if (imageCache[upid] !== undefined) continue;
+
+        const key = photoKeyByUserPlantRef.current[upid];
+        if (key === null) {
+          immediateUpdates[upid] = '';
+          continue;
+        }
+        if (key === undefined) continue;
+
+        const cached = signedUrlCacheRef.current[key];
+        if (cached !== undefined) {
+          immediateUpdates[upid] = cached;
+          continue;
+        }
+
+        needMetaLookup.push(upid);
+      }
+
+      if (Object.keys(immediateUpdates).length > 0) {
+        setImageCache((prev) => ({ ...prev, ...immediateUpdates }));
+      }
+
+      if (needMetaLookup.length === 0) return;
+
+      const uuidIds: string[] = [];
+      const legacyPaths: PhotoMeta[] = [];
+
+      for (const upid of needMetaLookup) {
+        const key = photoKeyByUserPlantRef.current[upid]!;
+        if (uuidRegex.test(key)) uuidIds.push(key);
+        else legacyPaths.push({ key, bucket: 'plant-photos', path: key, userPlantId: upid });
+      }
+
+      if (uuidIds.length > 0) {
+        const { data: photoRows, error } = await supabase
+          .from('user_plant_photos')
+          .select('id, bucket, object_path')
+          .in('id', uuidIds);
+
+        if (!error && photoRows) {
+          const byId: Record<string, { bucket: string; object_path: string }> = {};
+          for (const r of photoRows) {
+            byId[r.id] = { bucket: r.bucket || 'plant-photos', object_path: r.object_path };
+          }
+          for (const upid of needMetaLookup) {
+            const key = photoKeyByUserPlantRef.current[upid]!;
+            const meta = byId[key];
+            if (meta?.object_path) {
+              signTargets.push({ key, bucket: meta.bucket, path: meta.object_path, userPlantId: upid });
+            } else {
+              signedUrlCacheRef.current[key] = '';
+              immediateUpdates[upid] = '';
+            }
+          }
+        }
+      }
+
+      signTargets.push(...legacyPaths);
+
+      if (Object.keys(immediateUpdates).length > 0) {
+        setImageCache((prev) => ({ ...prev, ...immediateUpdates }));
+      }
+
+      if (signTargets.length === 0) return;
+
+      const batchedUpdates: Record<string, string> = {};
+      try {
+        const byBucket = new Map<string, PhotoMeta[]>();
+        signTargets.forEach((pm) => {
+          const group = byBucket.get(pm.bucket) ?? [];
+          group.push(pm);
+          byBucket.set(pm.bucket, group);
+        });
+
+        for (const [bucket, items] of byBucket) {
+          const storageAny = supabase.storage.from(bucket) as any;
+          if (typeof storageAny.createSignedUrls === 'function') {
+            const { data: signedList, error: batchErr } = await storageAny.createSignedUrls(
+              items.map((i: PhotoMeta) => i.path),
+              3600
+            );
+
+            if (!batchErr && Array.isArray(signedList) && signedList.length === items.length) {
+              signedList.forEach((entry: any, idx: number) => {
+                const pm = items[idx];
+                const url: string | undefined = entry?.signedUrl || undefined;
+                if (url) {
+                  signedUrlCacheRef.current[pm.key] = url;
+                  batchedUpdates[pm.userPlantId] = url;
+                }
+              });
+              continue;
+            }
+          }
+
+          for (const pm of items) {
+            try {
+              const { data: signed, error: perErr } = await supabase.storage
+                .from(bucket)
+                .createSignedUrl(pm.path, 3600);
+              const url = signed?.signedUrl;
+              if (!perErr && url) {
+                signedUrlCacheRef.current[pm.key] = url;
+                batchedUpdates[pm.userPlantId] = url;
+              }
+            } catch {}
+          }
+        }
+      } catch {}
+
+      if (Object.keys(batchedUpdates).length > 0) {
+        setImageCache((prev) => {
+          const next = { ...prev };
+          let changed = false;
+          for (const [k, v] of Object.entries(batchedUpdates)) {
+            if (next[k] !== v) {
+              next[k] = v;
+              changed = true;
+            }
+          }
+          return changed ? next : prev;
+        });
+      }
+    };
+
+    loadAllImages();
+  }, [metaReadyRef.current, schedules, imageCache]);
+
+  // Rebuild once per user session, then fetch
+  useEffect(() => {
+    if (currentUserId.current !== user?.id) {
+      hasRebuildRun.current = false;
+      currentUserId.current = user?.id;
+      setImageCache({});
+      signedUrlCacheRef.current = {};
+      photoKeyByUserPlantRef.current = {};
+      metaReadyRef.current = false;
+    }
+    if (hasRebuildRun.current || !user?.id) return;
+
+    hasRebuildRun.current = true;
+    (async () => {
+      setRebuildModalVisible(true);
+      try {
+        await rebuild();
+        await fetchSchedules();
+      } catch (err) {
+        console.error('Rebuild failed:', err);
+        await fetchSchedules();
+      } finally {
+        setRebuildModalVisible(false);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
+
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    // Full reset so we re-sign everything on purpose
+    setImageCache({});
+    signedUrlCacheRef.current = {}; // clear cached failures too
+    photoKeyByUserPlantRef.current = {};
+    metaReadyRef.current = false;
+    fetchSchedules();
+  }, [fetchSchedules]);
+
+  const toggleLocation = useCallback((section: string) => {
+    setOpenLocations((prev) => ({
+      ...prev,
+      [section]: !(prev[section] ?? false),
+    }));
+  }, []);
+
+  const toggleCard = useCallback((cardId: string) => {
+    setExpandedCardId((prev) => (prev === cardId ? null : cardId));
+  }, []);
+
+  const [selectedCardIds, setSelectedCardIds] = useState<Record<string, boolean>>(
+    {}
+  );
+
+  const selectedCardIdList = useMemo(
+    () => Object.keys(selectedCardIds),
+    [selectedCardIds]
+  );
+
+  const selectionMode = selectedCardIdList.length > 0;
+  const selectionCount = selectedCardIdList.length;
+
+  const toggleSelectionForCard = useCallback((cardId: string) => {
+    setSelectedCardIds((prev) => {
+      const next = { ...prev };
+      if (next[cardId]) {
+        delete next[cardId];
+      } else {
+        next[cardId] = true;
+      }
+      return next;
+    });
+  }, []);
+
+  const handleCardPress = useCallback(
+    (cardId: string) => {
+      if (selectionMode) {
+        toggleSelectionForCard(cardId);
+        return;
+      }
+      toggleCard(cardId);
+    },
+    [selectionMode, toggleCard, toggleSelectionForCard]
+  );
+
+  const handleCardLongPress = useCallback(
+    (cardId: string) => {
+      toggleSelectionForCard(cardId);
+      setExpandedCardId((prev) => (prev === cardId ? null : prev));
+    },
+    [toggleSelectionForCard]
+  );
+
+  const clearSelection = useCallback(() => {
+    setSelectedCardIds({});
+  }, []);
+
+  const handleInfoPress = useCallback((userPlantId: string) => {
+    (nav as any).navigate('PlantDetail', { id: userPlantId });
+  }, [nav]);
+
+  const openDelayModal = useCallback(
+    ({
+      schedulesToDelay,
+      defaultSchedule,
+      targetUserPlantIds,
+      mode,
+    }: {
+      schedulesToDelay: ScheduleItem[];
+      defaultSchedule?: ScheduleItem | null;
+      targetUserPlantIds: string[];
+      mode: 'single' | 'multi';
+    }) => {
+      if (!schedulesToDelay.length) return;
+
+      const initialSchedule = defaultSchedule ?? schedulesToDelay[0] ?? null;
+      setDelayDays(1); // Reset to default
+      setDelayModal({
+        visible: true,
+        schedules: schedulesToDelay,
+        selectedEventTypes: new Set<string>([
+          initialSchedule?.eventType ?? schedulesToDelay[0]?.eventType ?? 'water',
+        ]),
+        mode,
+        targetUserPlantIds,
+      });
+    },
+    []
+  );
+
+  const handleDelayPressPlant = useCallback(
+    (combined: CombinedSchedule) => {
+      const scheduleList = Object.values(combined.schedules);
+      if (scheduleList.length === 0) return;
+
+      const sortedList = [...scheduleList].sort(
+        (a, b) => new Date(a.nextRunAt).getTime() - new Date(b.nextRunAt).getTime()
+      );
+
+      openDelayModal({
+        schedulesToDelay: sortedList,
+        defaultSchedule: sortedList[0],
+        targetUserPlantIds: [combined.userPlantId],
+        mode: 'single',
+      });
+    },
+    [openDelayModal]
+  );
+
+  const handleBulkDelay = useCallback(() => {
+    if (!selectedCardIdList.length) return;
+    const targetSet = new Set(selectedCardIdList);
+    const schedulesToDelay = schedules.filter((schedule) =>
+      targetSet.has(schedule.userPlantId)
+    );
+    if (!schedulesToDelay.length) return;
+
+    openDelayModal({
+      schedulesToDelay,
+      defaultSchedule: schedulesToDelay[0],
+      targetUserPlantIds: selectedCardIdList,
+      mode: 'multi',
+    });
+  }, [selectedCardIdList, schedules, openDelayModal]);
+
+  const handleBulkWater = useCallback(() => {
+    if (!selectedCardIdList.length) return;
+    setSelectedUserPlantIds(selectedCardIdList);
+    setSelectedEventType('water');
+    setWaterModalOpen(true);
+  }, [selectedCardIdList]);
+
+  const handleBulkFertilize = useCallback(() => {
+    if (!selectedCardIdList.length) return;
+    setSelectedUserPlantIds(selectedCardIdList);
+    setSelectedEventType('fertilize');
+    setFertilizeModalOpen(true);
+  }, [selectedCardIdList]);
+
+  const closeDelayModal = useCallback(() => {
+    setDelayModal({
+      visible: false,
+      schedules: [],
+      selectedEventTypes: new Set<string>(),
+      mode: 'single',
+      targetUserPlantIds: [],
+    });
+  }, []);
+
+  const toggleDelayEventType = useCallback((eventType: string) => {
+    setDelayModal((prev) => {
+      const next = new Set(prev.selectedEventTypes);
+      if (next.has(eventType)) {
+        next.delete(eventType);
+      } else {
+        next.add(eventType);
+      }
+      if (next.size === 0) {
+        next.add(eventType);
+      }
+      return { ...prev, selectedEventTypes: next };
+    });
+  }, []);
+
+  const incrementDelayDays = useCallback(() => {
+    setDelayDays((prev) => Math.min(prev + 1, 30));
+  }, []);
+
+  const decrementDelayDays = useCallback(() => {
+    setDelayDays((prev) => Math.max(prev - 1, 0));
+  }, []);
+
+  const handleCompletePress = useCallback((schedule: ScheduleItem) => {
+    setSelectedUserPlantIds([schedule.userPlantId]);
+    setSelectedEventType(schedule.eventType as 'water' | 'fertilize');
+    if (schedule.eventType === 'water') {
+      setWaterModalOpen(true);
+    } else if (schedule.eventType === 'fertilize') {
+      setFertilizeModalOpen(true);
+    }
+    setExpandedCardId(null); // Close the expanded card
+  }, []);
+
+  const handleModalSaved = useCallback(async () => {
+    if (selectedUserPlantIds.length === 0 || !selectedEventType) {
+      await fetchSchedules();
+      return;
+    }
+
+    try {
+      if (selectedEventType === 'water') {
+        await Promise.all(
+          selectedUserPlantIds.map((id) => updateWaterSchedule(id))
+        );
+      } else if (selectedEventType === 'fertilize') {
+        await Promise.all(
+          selectedUserPlantIds.map((id) => updateFertilizeSchedule(id))
+        );
+      }
+    } catch (err) {
+      console.error('Failed to update schedule:', err);
+    } finally {
+      await fetchSchedules();
+      setSelectedUserPlantIds([]);
+      setSelectedEventType('');
+      clearSelection();
+    }
+  }, [
+    selectedUserPlantIds,
+    selectedEventType,
+    updateWaterSchedule,
+    updateFertilizeSchedule,
+    fetchSchedules,
+    clearSelection,
+  ]);
+
+  const selectedDelaySchedules = useMemo(() => {
+    if (delayModal.selectedEventTypes.size === 0) return [];
+    const targetSet =
+      delayModal.targetUserPlantIds.length > 0
+        ? new Set(delayModal.targetUserPlantIds)
+        : null;
+    return delayModal.schedules.filter((schedule) => {
+      if (!delayModal.selectedEventTypes.has(schedule.eventType)) return false;
+      if (targetSet && !targetSet.has(schedule.userPlantId)) return false;
+      return true;
+    });
+  }, [delayModal]);
+
+  const primaryDelaySchedule = selectedDelaySchedules[0] ?? null;
+  const selectedDelayPlantCount = useMemo(() => {
+    const set = new Set(selectedDelaySchedules.map((s) => s.userPlantId));
+    return set.size;
+  }, [selectedDelaySchedules]);
+
+  const delayEventOptions = useMemo(() => {
+    const seen = new Set<string>();
+    const options: string[] = [];
+    for (const schedule of delayModal.schedules) {
+      if (!seen.has(schedule.eventType)) {
+        seen.add(schedule.eventType);
+        options.push(schedule.eventType);
+      }
+    }
+    return options;
+  }, [delayModal.schedules]);
+
+  const delayEventLabels = useMemo(
+    () =>
+      Array.from(delayModal.selectedEventTypes).map((eventType) =>
+        eventType === 'water'
+          ? 'watering'
+          : eventType === 'fertilize'
+          ? 'fertilizing'
+          : eventType
+      ),
+    [delayModal.selectedEventTypes]
+  );
+
+  const delayActionLabel = useMemo(() => {
+    if (delayEventLabels.length === 0) return 'selected care';
+    if (delayEventLabels.length === 1) return delayEventLabels[0];
+    if (delayEventLabels.length === 2)
+      return `${delayEventLabels[0]} & ${delayEventLabels[1]}`;
+    const last = delayEventLabels[delayEventLabels.length - 1];
+    const rest = delayEventLabels.slice(0, -1).join(', ');
+    return `${rest}, & ${last}`;
+  }, [delayEventLabels]);
+
+  const delayTargetLabel = useMemo(() => {
+    if (selectedDelaySchedules.length === 0) return 'selected plants';
+    if (delayModal.mode === 'multi' && selectedDelayPlantCount > 1) {
+      return `${selectedDelayPlantCount} plants`;
+    }
+    return (
+      primaryDelaySchedule?.plantNickname ||
+      primaryDelaySchedule?.plantName ||
+      'this plant'
+    );
+  }, [
+    selectedDelaySchedules.length,
+    delayModal.mode,
+    selectedDelayPlantCount,
+    primaryDelaySchedule?.plantNickname,
+    primaryDelaySchedule?.plantName,
+  ]);
+
+  const handleConfirmDelay = useCallback(async () => {
+    if (delayModal.selectedEventTypes.size === 0) return;
+    let targets: ScheduleItem[] = [];
+
+    if (delayModal.mode === 'multi') {
+      const targetSet = new Set(delayModal.targetUserPlantIds);
+      targets = schedules.filter(
+        (schedule) =>
+          targetSet.has(schedule.userPlantId) &&
+          delayModal.selectedEventTypes.has(schedule.eventType)
+      );
+    } else {
+      targets = delayModal.schedules.filter((schedule) =>
+        delayModal.selectedEventTypes.has(schedule.eventType)
+      );
+    }
+
+    if (!targets.length) return;
+
+    setDelayingSchedule(true);
+    try {
+      await Promise.all(
+        targets.map((schedule) => delayScheduleByDays(schedule.id, delayDays))
+      );
+      closeDelayModal();
+      await fetchSchedules();
+      clearSelection();
+    } catch (err) {
+      console.error('Failed to delay schedule:', err);
+    } finally {
+      setDelayingSchedule(false);
+    }
+  }, [
+    delayModal,
+    schedules,
+    delayDays,
+    fetchSchedules,
+    closeDelayModal,
+    clearSelection,
+  ]);
+
+  /* Grouping by task type and time */
+  const eventConfig = useMemo(
+    () => [
+      { type: 'water', label: 'Water' },
+      { type: 'fertilize', label: 'Fertilize' },
+    ],
+    []
+  );
+
+  const isDueToday = useCallback(
+    (dateString: string) => {
+      const d = new Date(dateString);
+      return d >= today && d < tomorrow;
+    },
+    [today, tomorrow]
+  );
+
+  const isDueTomorrow = useCallback(
+    (dateString: string) => {
+      const d = new Date(dateString);
+      return d >= tomorrow && d < dayAfterTomorrow;
+    },
+    [tomorrow]
+  );
+
+  const getRelativeDueText = useCallback(
+    (dateString: string) => {
+      const dueDate = new Date(dateString);
+      const dueMidnight = new Date(dueDate);
+      dueMidnight.setHours(0, 0, 0, 0);
+      const todayMidnight = new Date(today);
+      const diffMs = dueMidnight.getTime() - todayMidnight.getTime();
+      const diffDays = Math.round(diffMs / (1000 * 60 * 60 * 24));
+
+      if (diffDays === 0) return 'Today';
+      if (diffDays === 1) return 'Tomorrow';
+      if (diffDays > 1) return `in ${diffDays} days`;
+      if (diffDays === -1) return 'Yesterday';
+
+      const abs = Math.abs(diffDays);
+      const unit = abs === 1 ? 'day' : 'days';
+      return `${abs} ${unit} ago`;
+    },
+    [today]
+  );
+
+  const compareCombinedSchedules = useCallback(
+    (a: CombinedSchedule, b: CombinedSchedule) => {
+      const dateDiff = a.earliestNextRunAt - b.earliestNextRunAt;
+      if (dateDiff !== 0) return dateDiff;
+
+      const nameA = (a.plantNickname || a.plantName || '').toLowerCase();
+      const nameB = (b.plantNickname || b.plantName || '').toLowerCase();
+      if (nameA && nameB) {
+        const nameDiff = nameA.localeCompare(nameB);
+        if (nameDiff !== 0) return nameDiff;
+      }
+
+      return 0;
+    },
+    []
+  );
+
+  /* Strict discriminated union */
+  type Row =
+    | {
+        kind: 'section';
+        id: string;
+        label: string;
+        todayCount: number;
+        isOpen: boolean;
+      }
+    | {
+        kind: 'combined-item';
+        id: string;
+        combined: CombinedSchedule;
+        eventSummaries: EventSummary[];
+      }
+    | { kind: 'empty'; id: string; message: string };
+
+  const rows: Row[] = useMemo(() => {
+    if (schedules.length === 0) {
+      return [
+        {
+          kind: 'empty',
+          id: 'no-schedules',
+          message: 'No upcoming care tasks.',
+        },
+      ];
+    }
+
+    const buckets = new Map<
+      string,
+      {
+        label: string;
+        items: Map<string, CombinedSchedule>;
+        todayCount: number;
+      }
+    >();
+
+    for (const schedule of schedules) {
+      const key = schedule.locationId ?? 'no-location';
+      const bucket =
+        buckets.get(key) ??
+        (() => {
+          const created = {
+            label: schedule.locationName,
+            items: new Map<string, CombinedSchedule>(),
+            todayCount: 0,
+          };
+          buckets.set(key, created);
+          return created;
+        })();
+
+      const plantId = schedule.userPlantId;
+      const combined =
+        bucket.items.get(plantId) ??
+        (() => {
+          const created: CombinedSchedule = {
+            userPlantId: plantId,
+            plantNickname: schedule.plantNickname,
+            plantName: schedule.plantName,
+            locationId: schedule.locationId,
+            locationName: schedule.locationName,
+            schedules: {},
+            earliestNextRunAt: Number.POSITIVE_INFINITY,
+          };
+          bucket.items.set(plantId, created);
+          return created;
+        })();
+
+      combined.schedules[schedule.eventType] = schedule;
+      const ts = new Date(schedule.nextRunAt).getTime();
+      if (Number.isFinite(ts) && ts < combined.earliestNextRunAt) {
+        combined.earliestNextRunAt = ts;
+      }
+
+      if (isDueToday(schedule.nextRunAt)) {
+        bucket.todayCount += 1;
+      }
+    }
+
+    const sortedBuckets = Array.from(buckets.entries()).sort((a, b) =>
+      a[1].label.localeCompare(b[1].label, undefined, { sensitivity: 'base' })
+    );
+
+    const out: Row[] = [];
+    for (const [key, bucket] of sortedBuckets) {
+      const isOpen = openLocations[key] ?? false;
+      out.push({
+        kind: 'section',
+        id: key,
+        label: bucket.label,
+        todayCount: bucket.todayCount,
+        isOpen,
+      });
+
+      if (!isOpen) continue;
+
+      const combinedList = Array.from(bucket.items.values()).sort(
+        compareCombinedSchedules
+      );
+
+      combinedList.forEach((combined) => {
+        const eventSummaries: EventSummary[] = eventConfig.map(({ type, label }) => {
+          const schedule = combined.schedules[type];
+
+          if (!schedule) {
+            return {
+              eventType: type,
+              label,
+              dateText: 'No schedule',
+              isToday: false,
+              isTomorrow: false,
+              backgroundColor: '#4B5563',
+              textColor: '#F9FAFB',
+              pillBackground: '#1F2937',
+              pillBorderColor: '#4B5563',
+              pillTextColor: '#F9FAFB',
+              combinedText: `${label} unavailable`,
+              schedule: null,
+            };
+          }
+
+          const dueToday = isDueToday(schedule.nextRunAt);
+          const dueTomorrow = isDueTomorrow(schedule.nextRunAt);
+          const relativeText = getRelativeDueText(schedule.nextRunAt);
+
+          const backgroundColor = dueToday
+            ? '#047857'
+            : dueTomorrow
+            ? '#92400E'
+            : '#374151';
+
+          const textColor = '#F9FAFB';
+
+          const pillBackground = dueToday
+            ? 'rgba(6, 95, 70, 0.18)'
+            : dueTomorrow
+            ? 'rgba(180, 83, 9, 0.18)'
+            : 'rgba(79, 70, 229, 0.12)';
+
+          const pillBorderColor = dueToday
+            ? '#047857'
+            : dueTomorrow
+            ? '#B45309'
+            : '#4B5563';
+
+          const pillTextColor = '#F9FAFB';
+
+          const combinedText = `${label} ${relativeText}`;
+
+          return {
+            eventType: type,
+            label,
+            dateText: relativeText,
+            isToday: dueToday,
+            isTomorrow: dueTomorrow,
+            backgroundColor,
+            textColor,
+            pillBackground,
+            pillBorderColor,
+            pillTextColor,
+            combinedText,
+            schedule,
+          };
+        });
+
+        out.push({
+          kind: 'combined-item',
+          id: combined.userPlantId,
+          combined,
+          eventSummaries,
+        });
+      });
+    }
+
+    return out;
+  }, [
+    schedules,
+    openLocations,
+    isDueToday,
+    isDueTomorrow,
+    compareCombinedSchedules,
+    eventConfig,
+    getRelativeDueText,
+  ]);
+
+  return (
+    <>
+      {selectionMode && (
+        <View
+          style={[
+            styles.selectionToolbar,
+            { backgroundColor: theme.colors.card, borderColor: theme.colors.border },
+          ]}
+        >
+          <View>
+            <ThemedText style={styles.selectionToolbarText}>
+              {selectionCount} selected
+            </ThemedText>
+            <Pressable onPress={clearSelection} hitSlop={12}>
+              <ThemedText style={styles.selectionToolbarClear}>Clear</ThemedText>
+            </Pressable>
+          </View>
+          <View style={styles.selectionToolbarActions}>
+            <Pressable
+              style={[
+                styles.selectionToolbarButton,
+              ]}
+              onPress={handleBulkDelay}
+            >
+              <IconSymbol name="clock" size={20} color={theme.colors.text} />
+              <ThemedText style={styles.selectionToolbarButtonLabel}>Delay</ThemedText>
+            </Pressable>
+            <Pressable
+              style={[
+                styles.selectionToolbarButton,
+              ]}
+              onPress={handleBulkWater}
+            >
+              <IconSymbol name="drop.fill" size={20} color={theme.colors.text} />
+              <ThemedText style={styles.selectionToolbarButtonLabel}>Water</ThemedText>
+            </Pressable>
+            <Pressable
+              style={[
+                styles.selectionToolbarButton,
+              ]}
+              onPress={handleBulkFertilize}
+            >
+              <IconSymbol name="leaf.fill" size={20} color={theme.colors.text} />
+              <ThemedText style={styles.selectionToolbarButtonLabel}>Fertilize</ThemedText>
+            </Pressable>
+          </View>
+        </View>
+      )}
+      <ParallaxScrollView
+        headerBackgroundColor={{ light: '#E5F4EF', dark: '#12231F' }}
+        headerImage={
+          <Image
+            source={require('../../assets/images/plants-header.jpg')}
+            contentFit="cover"
+            transition={200}
+            style={styles.headerImage}
+          />
+        }
+        refreshing={refreshing}
+        onRefresh={onRefresh}
+      >
+        {loading ? (
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color={theme.colors.primary} />
+          </View>
+        ) : (
+          <View style={[styles.content, selectionMode && { paddingTop: 8 }]}>
+            {rows.map((item) => {
+              if (item.kind === 'section') {
+                return (
+                  <Pressable
+                    key={item.id}
+                    style={[styles.sectionHeader, { backgroundColor: theme.colors.card, borderColor: theme.colors.border }]}
+                    onPress={() => toggleLocation(item.id)}
+                  >
+                    <View style={styles.sectionHeaderContent}>
+                      <View style={styles.sectionHeaderLeft}>
+                        <IconSymbol
+                          name="location"
+                          size={24}
+                          color={theme.colors.text}
+                        />
+                        <ThemedText style={styles.sectionTitle}>{item.label}</ThemedText>
+                        {item.todayCount > 0 && (
+                          <View style={[styles.countBadge, { backgroundColor: '#10B981' }]}>
+                            <ThemedText style={styles.countBadgeText}>{item.todayCount}</ThemedText>
+                          </View>
+                        )}
+                      </View>
+                      <IconSymbol
+                        name={item.isOpen ? 'chevron.up' : 'chevron.down'}
+                        size={20}
+                        color={theme.colors.text}
+                      />
+                    </View>
+                  </Pressable>
+                );
+              }
+
+              if (item.kind === 'empty') {
+                return (
+                  <ThemedText key={item.id} style={styles.emptyText}>
+                    {item.message}
+                  </ThemedText>
+                );
+              }
+
+              if (item.kind === 'combined-item') {
+                const combined = item.combined;
+                const cardId = combined.userPlantId;
+                const isSelected = !!selectedCardIds[cardId];
+
+                return (
+                  <CombinedScheduleCard
+                    key={item.id}
+                    plantNickname={combined.plantNickname}
+                    plantName={combined.plantName}
+                    imageUrl={imageCache[combined.userPlantId]}
+                    cardColor={theme.colors.card}
+                    borderColor={theme.colors.border as string}
+                    textColor={theme.colors.text}
+                    isExpanded={expandedCardId === cardId}
+                    isSelected={isSelected}
+                    onPress={() => handleCardPress(cardId)}
+                    onLongPress={() => handleCardLongPress(cardId)}
+                    onInfoPress={() => handleInfoPress(combined.userPlantId)}
+                    onDelayPressPlant={() => handleDelayPressPlant(combined)}
+                    eventSummaries={item.eventSummaries}
+                    onCarePress={handleCompletePress}
+                  />
+                );
+              }
+
+              return null;
+            })}
+          </View>
+        )}
+      </ParallaxScrollView>
+
+      <Modal visible={rebuildModalVisible || rebuilding} transparent animationType="fade">
+        <View style={styles.modalBackdrop}>
+          <View
+            style={[
+              styles.modalCard,
+              { backgroundColor: theme.colors.card, borderColor: theme.colors.border },
+            ]}
+          >
+            <ActivityIndicator color={theme.colors.text as any} size="large" />
+            <ThemedText style={styles.modalTitle}>Rebuilding Schedules</ThemedText>
+            <ThemedText style={styles.modalSubtitle}>
+              {doneCount} of {total} tasks
+            </ThemedText>
+            {total > 0 && (
+              <>
+                <View style={[styles.progressBarContainer, { backgroundColor: theme.colors.border }]}>
+                  <View
+                    style={[
+                      styles.progressBarFill,
+                      {
+                        width: `${Math.round((doneCount / total) * 100)}%`,
+                        backgroundColor: '#10B981',
+                      },
+                    ]}
+                  />
+                </View>
+                <ThemedText style={styles.progressText}>
+                  {Math.round((doneCount / total) * 100)}%
+                </ThemedText>
+              </>
+            )}
+          </View>
+        </View>
+      </Modal>
+
+      {/* Delay Modal */}
+      <Modal visible={delayModal.visible} transparent animationType="fade">
+        <View style={styles.modalBackdrop}>
+          <View
+            style={[
+              styles.delayModalCard,
+              { backgroundColor: theme.colors.card, borderColor: theme.colors.border },
+            ]}
+          >
+            {delayEventOptions.length > 0 && (
+              <View style={styles.delayEventSwitcher}>
+                {delayEventOptions.map((eventType) => {
+                  const isSelected =
+                    delayModal.selectedEventTypes?.has(eventType) ?? false;
+                  const optionLabel =
+                    eventType === 'water'
+                      ? 'Water'
+                      : eventType === 'fertilize'
+                      ? 'Fertilize'
+                      : eventType;
+                  return (
+                    <Pressable
+                      key={eventType}
+                      style={[
+                        styles.delayEventOption,
+                        isSelected && styles.delayEventOptionActive,
+                        { borderColor: theme.colors.border },
+                      ]}
+                      onPress={() => toggleDelayEventType(eventType)}
+                    >
+                      <ThemedText
+                        style={[
+                          styles.delayEventOptionText,
+                          isSelected && styles.delayEventOptionTextActive,
+                        ]}
+                      >
+                        {optionLabel}
+                      </ThemedText>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            )}
+
+            <ThemedText style={styles.modalTitle}>
+              Delay{' '}
+              {delayActionLabel} for{'\n'}
+              {delayTargetLabel}?
+            </ThemedText>
+            
+            {/* Number Picker */}
+            <View style={styles.numberPickerContainer}>
+              <Pressable
+                style={[styles.pickerButton, { borderColor: theme.colors.border }]}
+                onPress={decrementDelayDays}
+              >
+                <ThemedText style={styles.pickerButtonText}>−</ThemedText>
+              </Pressable>
+              
+              <View style={styles.pickerValue}>
+                <ThemedText style={styles.pickerNumber}>{delayDays}</ThemedText>
+                <ThemedText style={styles.pickerLabel}>{delayDays === 1 ? 'day' : 'days'}</ThemedText>
+              </View>
+              
+              <Pressable
+                style={[styles.pickerButton, { borderColor: theme.colors.border }]}
+                onPress={incrementDelayDays}
+              >
+                <ThemedText style={styles.pickerButtonText}>+</ThemedText>
+              </Pressable>
+            </View>
+
+            {/* Actions */}
+            <View style={styles.modalActions}>
+              <Pressable
+                style={[styles.modalActionButton, styles.cancelButton, { borderColor: theme.colors.border }]}
+                onPress={closeDelayModal}
+              >
+                <ThemedText style={styles.modalActionButtonText}>Cancel</ThemedText>
+              </Pressable>
+              
+              <Pressable
+                style={[
+                  styles.modalActionButton,
+                  styles.confirmButton,
+                  { backgroundColor: delayingSchedule ? '#9CA3AF' : '#10B981' }
+                ]}
+                onPress={handleConfirmDelay}
+                disabled={delayingSchedule}
+              >
+                {delayingSchedule ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <ThemedText style={[styles.modalActionButtonText, { color: '#fff' }]}>Delay</ThemedText>
+                )}
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Water Modal */}
+      <WaterModal
+        open={waterModalOpen}
+        onClose={() => {
+          setWaterModalOpen(false);
+        }}
+        userPlantIds={selectedUserPlantIds}
+        onSaved={handleModalSaved}
+      />
+
+      {/* Fertilize Modal */}
+      <FertilizeModal
+        open={fertilizeModalOpen}
+        onClose={() => {
+          setFertilizeModalOpen(false);
+        }}
+        userPlantIds={selectedUserPlantIds}
+        onSaved={handleModalSaved}
+      />
+    </>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1 },
+  headerImage: { width: '100%', height: '100%' },
+  content: { paddingTop: 8 },
+  loadingContainer: { paddingVertical: 40, alignItems: 'center' },
+  sectionHeader: {
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    marginVertical: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  sectionHeaderContent: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  sectionHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flex: 1,
+  },
+  sectionTitle: { 
+    fontSize: 20, 
+    fontWeight: '700',
+  },
+  subsectionTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    marginTop: 16,
+    marginBottom: 8,
+    opacity: 0.9,
+  },
+  countBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 12,
+    minWidth: 24,
+    alignItems: 'center',
+  },
+  countBadgeText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  emptyText: {
+    opacity: 0.6,
+    fontStyle: 'italic',
+    textAlign: 'center',
+    paddingVertical: 16,
+  },
+  cardWrapper: {
+    marginBottom: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+    overflow: 'hidden',
+  },
+  scheduleCard: {
+    flexDirection: 'row',
+    padding: 12,
+    gap: 12,
+    alignItems: 'center',
+  },
+  scheduleCardExpanded: {
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: 'rgba(0,0,0,0.1)',
+  },
+  actionBar: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+  },
+  actionButton: {
+    alignItems: 'center',
+    gap: 4,
+    flex: 1,
+  },
+  actionButtonText: {
+    fontSize: 12,
+    fontWeight: '600',
+    opacity: 0.8,
+  },
+  imageContainer: {
+    width: 60,
+    height: 60,
+    borderRadius: 8,
+    overflow: 'hidden',
+    position: 'relative',
+  },
+  plantImage: { width: '100%', height: '100%' },
+  imageSkeleton: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    width: '100%',
+    height: '100%',
+    zIndex: 1,
+  },
+  imagePlaceholder: {
+    width: '100%',
+    height: '100%',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  imagePlaceholderText: { fontSize: 24 },
+  selectionOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(15, 23, 42, 0.45)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 2,
+  },
+  selectionToolbar: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    zIndex: 20,
+  },
+  selectionToolbarText: {
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  selectionToolbarClear: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#3B82F6',
+    marginTop: 4,
+  },
+  selectionToolbarActions: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  selectionToolbarButton: {
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    paddingVertical: 6,
+    paddingHorizontal: 4,
+    borderRadius: 10,
+    borderWidth: 0,
+    width: 88,
+  },
+  selectionToolbarButtonLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    opacity: 0.8,
+    textAlign: 'center',
+  },
+  cardContent: { flex: 1, justifyContent: 'center' },
+  cardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 0,
+  },
+  plantName: { fontSize: 16, fontWeight: '700', flex: 1 },
+  eventChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  scheduleTime: {
+    fontSize: 14,
+    opacity: 0.7,
+    lineHeight: 18,
+  },
+  scheduleTimeToday: {
+    color: '#10B981',
+    fontWeight: '700',
+  },
+  eventSummaryList: {
+    marginTop: 6,
+  },
+  eventSummaryRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 2,
+    gap: 8,
+  },
+  duePill: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 14,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  duePillText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalCard: {
+    minWidth: 280,
+    paddingVertical: 24,
+    paddingHorizontal: 24,
+    borderRadius: 16,
+    borderWidth: StyleSheet.hairlineWidth,
+    alignItems: 'center',
+  },
+  modalTitle: { fontSize: 18, fontWeight: '700', marginTop: 16, textAlign: 'center' },
+  modalSubtitle: { fontSize: 14, opacity: 0.7, marginTop: 8, textAlign: 'center' },
+  progressBarContainer: {
+    width: '100%',
+    height: 8,
+    borderRadius: 4,
+    overflow: 'hidden',
+    marginTop: 16,
+  },
+  progressBarFill: { height: '100%', borderRadius: 4 },
+  progressText: { fontSize: 14, fontWeight: '600', marginTop: 8, opacity: 0.8 },
+  delayModalCard: {
+    minWidth: 320,
+    maxWidth: 400,
+    marginHorizontal: 24,
+    paddingVertical: 24,
+    paddingHorizontal: 24,
+    borderRadius: 16,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  delayEventSwitcher: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 16,
+  },
+  delayEventOption: {
+    flex: 1,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    alignItems: 'center',
+  },
+  delayEventOptionActive: {
+    backgroundColor: 'rgba(16, 185, 129, 0.12)',
+  },
+  delayEventOptionText: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  delayEventOptionTextActive: {
+    color: '#10B981',
+  },
+  numberPickerContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 16,
+    marginTop: 24,
+    marginBottom: 24,
+  },
+  pickerButton: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pickerButtonText: {
+    fontSize: 28,
+    fontWeight: '700',
+  },
+  pickerValue: {
+    alignItems: 'center',
+    minWidth: 100,
+  },
+  pickerNumber: {
+    paddingTop: 10,
+    lineHeight: 48,
+    fontSize: 48,
+    fontWeight: '800',
+  },
+  pickerLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    opacity: 0.7,
+    marginTop: 4,
+  },
+  modalActions: {
+    flexDirection: 'row',
+    gap: 12,
+    width: '100%',
+  },
+  modalActionButton: {
+    flex: 1,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  cancelButton: {
+    borderWidth: 2,
+  },
+  confirmButton: {
+    // backgroundColor set inline
+  },
+  modalActionButtonText: {
+    fontSize: 16,
+    fontWeight: '700',
+  },
+});

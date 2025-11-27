@@ -43,9 +43,7 @@ export async function generateCare({
 
   // Stage 1: Parallel generation (profile + independent care fields)
   const stage1Results = await stage('stage1_parallel', 'Stage 1: Parallel generation', async () => {
-    const promises: Promise<any>[] = [];
-    
-    // Profile (needed for light/water)
+    // ----- PROFILE (needed for light/water) -----
     let profilePromise: Promise<Profile | null> = Promise.resolve(null);
     if (!hasLight || !hasWater) {
       profilePromise = (async () => {
@@ -53,111 +51,167 @@ export async function generateCare({
         const hard = HARD_RULES[sciKey] || null;
         if (hard) {
           const filled = await openAIJson<Profile>(
-            SCHEMA_PROFILE, profileInstructions(),
-            `${baseInput}\n${unitsNote}\nUse these fixed defaults if sensible: ${JSON.stringify(hard)}\nOnly output JSON.`, 500, 500
+            SCHEMA_PROFILE,
+            profileInstructions(),
+            `${baseInput}\n${unitsNote}\nUse these fixed defaults if sensible: ${JSON.stringify(hard)}\nOnly output JSON.`,
+            500, 500
           );
           return sanitizeProfile({ ...filled, ...hard } as Profile);
         }
         const filled = await openAIJson<Profile>(
-          SCHEMA_PROFILE, profileInstructions(),
-          `${baseInput}\n${unitsNote}\nOnly output JSON.`, 500, 500
+          SCHEMA_PROFILE,
+          profileInstructions(),
+          `${baseInput}\n${unitsNote}\nOnly output JSON.`,
+          500, 500
         );
         return sanitizeProfile(filled);
       })();
     }
 
-    // Independent care fields
+    // ----- INDEPENDENT FIELDS (track by key, not by index) -----
+    const tasks: {
+      tempHum?: Promise<{ care_temp_humidity: string }>;
+      fert?: Promise<{ care_fertilizer: string }>;
+      prune?: Promise<{ care_pruning: string }>;
+      soil?: Promise<{ soil_description: string }>;
+      prop?: Promise<{ propagation_techniques: { method: CanonMethod; difficulty: Difficulty; description: string; min_days: number; max_days: number }[] }>;
+    } = {};
+
     if (!hasTempHum) {
-      promises.push(openAIJson<{ care_temp_humidity: string }>(
+      tasks.tempHum = openAIJson<{ care_temp_humidity: string }>(
         SCHEMA_TEMP_HUM,
-        ['You are a precise botany/cultivation writer.', sharedNameNote, unitsNote, 'Return ONLY JSON.',
-         'One paragraph with numeric temperature ranges in °F, humidity ranges in %, and damage thresholds for THIS species.',
-         'Do not include metric equivalents or parentheticals.'].join(' '),
+        [
+          'You are a precise botany/cultivation writer.',
+          sharedNameNote, unitsNote, 'Return ONLY JSON.',
+          'One paragraph with numeric temperature ranges in °F, humidity ranges in %, and damage thresholds for THIS species.',
+          'Do not include metric equivalents or parentheticals.'
+        ].join(' '),
         baseInput, 800, 800
-      ));
+      );
     }
 
     if (!hasFert) {
-      promises.push(openAIJson<{ care_fertilizer: string }>(
+      tasks.fert = openAIJson<{ care_fertilizer: string }>(
         SCHEMA_FERT,
-        ['You are a precise botany/cultivation writer.', sharedNameNote, unitsNote, 'Return ONLY JSON.',
-         'Two sentences: formulation/dilution, then frequency/seasonality. Use inches and °F if any units arise.',
-         'Do not include metric equivalents or parentheses.'].join(' '),
+        [
+          'You are a precise botany/cultivation writer.',
+          sharedNameNote, unitsNote, 'Return ONLY JSON.',
+          'Two sentences: formulation/dilution, then frequency/seasonality. Use inches and °F if any units arise.',
+          'Do not include metric equivalents or parentheses.'
+        ].join(' '),
         baseInput, 400, 400
-      ));
+      );
     }
 
     if (!hasPrune) {
-      promises.push(openAIJson<{ care_pruning: string }>(
+      tasks.prune = openAIJson<{ care_pruning: string }>(
         SCHEMA_PRUNE,
-        ['You are a precise botany/cultivation writer.', sharedNameNote, unitsNote, 'Return ONLY JSON.',
-         '2–3 sentences: when/why/how to prune THIS species; tie to plant form.',
-         'Do not include metric equivalents or parentheses.'].join(' '),
+        [
+          'You are a precise botany/cultivation writer.',
+          sharedNameNote, unitsNote, 'Return ONLY JSON.',
+          '2–3 sentences: when/why/how to prune THIS species; tie to plant form.',
+          'Do not include metric equivalents or parentheses.'
+        ].join(' '),
         baseInput, 500, 500
-      ));
+      );
     }
 
     if (!hasSoil) {
-      promises.push(openAIJson<{ soil_description: string }>(
+      tasks.soil = openAIJson<{ soil_description: string }>(
         SCHEMA_SOIL,
-        ['You are a precise botany/cultivation writer.', sharedNameNote, unitsNote, 'Return ONLY JSON.',
-         'Three sentences: ideal soil properties + best-practice mix for THIS species.',
-         'Use inches and °F only if you mention units; do not include metric equivalents or parentheses.'].join(' '),
+        [
+          'You are a precise botany/cultivation writer.',
+          sharedNameNote, unitsNote, 'Return ONLY JSON.',
+          'Three sentences: ideal soil properties + best-practice mix for THIS species.',
+          'Use inches and °F only if you mention units; do not include metric equivalents or parentheses.'
+        ].join(' '),
         baseInput, 500, 500
-      ));
+      );
     }
 
     if (!hasProp) {
-      promises.push(openAIJson<{ propagation_techniques: { method: CanonMethod; difficulty: Difficulty; description: string }[] }>(
+      tasks.prop = openAIJson<{
+        propagation_techniques: {
+          method: CanonMethod;
+          difficulty: Difficulty;
+          description: string;
+          min_days: number;
+          max_days: number;
+        }[];
+      }>(
         SCHEMA_PROP,
-        ['You are a precise botany writer.', sharedNameNote, unitsNote,
-         'Output MUST match the JSON schema exactly and return ONLY JSON.',
-         'Techniques MUST be realistic for THIS species; include concrete anatomy cues and counts/timings.',
-         'Use inches and °F only; do not include metric equivalents or parentheses.',
-         'One compact paragraph per technique; 1–3 techniques total.'].join(' '),
+        [
+          'CRITICAL: Each propagation technique MUST include exactly these 5 fields: method, difficulty, description, min_days (number), max_days (number). Missing any field will cause the response to be rejected.',
+          'You are a precise botany writer.',
+          sharedNameNote,
+          unitsNote,
+          'Output MUST match the JSON schema exactly and return ONLY JSON.',
+          'Techniques MUST be realistic for THIS species; include concrete anatomy cues and counts/timings.',
+          'Difficulty MUST reflect estimated success rates UNDER IDEAL CONDITIONS:',
+          'easy = >90% success, moderate = >60% success, challenging = >20% success, very_challenging = 5–20% success.',
+          'Exclude techniques with <5% success probability (these are NOT valid options).',
+          'min_days and max_days MUST reflect realistic timeframes for THIS species under ideal conditions.',
+          'Use inches and °F only; do not include metric equivalents or parentheses.',
+          'One compact paragraph per technique; 1–3 techniques total.'
+        ].join(' '),
         baseInput, 800, 800
-      ));
+      );
     }
 
-    const [profile, ...careResults] = await Promise.all([profilePromise, ...promises]);
-    
-    return {
+    // Resolve everything deterministically by key
+    const [profile, resolved] = await Promise.all([
+      profilePromise,
+      (async () => {
+        const entries = await Promise.all(
+          Object.entries(tasks).map(async ([k, p]) => [k, await p] as const)
+        );
+        return Object.fromEntries(entries) as {
+          tempHum?: { care_temp_humidity: string };
+          fert?: { care_fertilizer: string };
+          prune?: { care_pruning: string };
+          soil?: { soil_description: string };
+          prop?: { propagation_techniques: { method: CanonMethod; difficulty: Difficulty; description: string; min_days: number; max_days: number }[] };
+        };
+      })()
+    ]);
+
+    // Build result with safe fallbacks
+    const result = {
       profile,
-      tempHum: careResults[0] || { care_temp_humidity: existing.care_temp_humidity },
-      fert: careResults[1] || { care_fertilizer: existing.care_fertilizer },
-      prune: careResults[2] || { care_pruning: existing.care_pruning },
-      soil: careResults[3] || { soil_description: existing.soil_description },
-      prop: careResults[4] || { propagation_techniques: existing.propagation_techniques }
+      tempHum: resolved.tempHum ?? { care_temp_humidity: existing.care_temp_humidity },
+      fert:    resolved.fert    ?? { care_fertilizer:   existing.care_fertilizer   },
+      prune:   resolved.prune   ?? { care_pruning:      existing.care_pruning      },
+      soil:    resolved.soil    ?? { soil_description:  existing.soil_description  },
+      prop:    resolved.prop    ?? { propagation_techniques: existing.propagation_techniques ?? [] }
     };
+
+    // Normalize methods if we generated them this run
+    if (resolved.prop) {
+      result.prop.propagation_techniques = (result.prop.propagation_techniques ?? []).map((p: any) => ({
+        ...p,
+        method: normalizeMethodLabel(p.method)
+      }));
+    }
+
+    return result;
   }, onProgress);
 
   // Stage 2: Light (depends on profile)
   const light = await stage('stage2_light', 'Stage 2: Light requirements', async () => {
-    if (hasLight) {
-      return { care_light: existing.care_light };
-    }
+    if (hasLight) return { care_light: existing.care_light };
     if (!stage1Results.profile) throw new Error('Profile required to render care_light');
     return { care_light: renderLightFromProfile(stage1Results.profile) };
   }, onProgress);
 
   // Stage 3: Water (depends on profile and light)
   const water = await stage('stage3_water', 'Stage 3: Water schedule', async () => {
-    if (hasWater) {
-      return { care_water: existing.care_water };
-    }
+    if (hasWater) return { care_water: existing.care_water };
     if (!stage1Results.profile) throw new Error('Profile required to render care_water');
     const templatedWater = fixContradictions(light.care_light, renderWaterFromProfile(stage1Results.profile));
     return { care_water: templatedWater };
   }, onProgress);
 
-  // Handle propagation method normalization
-  if (stage1Results.prop && !hasProp) {
-    stage1Results.prop.propagation_techniques = stage1Results.prop.propagation_techniques.map((p: any) => ({ 
-      ...p, 
-      method: normalizeMethodLabel(p.method) 
-    }));
-  }
-
+  // Assemble final care result
   const result: CareResult = {
     care_light: light.care_light,
     care_water: water.care_water,
@@ -165,9 +219,10 @@ export async function generateCare({
     care_fertilizer: stage1Results.fert.care_fertilizer,
     care_pruning: stage1Results.prune.care_pruning,
     soil_description: stage1Results.soil.soil_description,
-    propagation_techniques: stage1Results.prop.propagation_techniques
+    propagation_techniques: stage1Results.prop.propagation_techniques ?? []
   };
 
+  // Build payload of only the fields we generated this run
   const payload: Record<string, any> = {};
   if (!hasLight)   payload.care_light = result.care_light;
   if (!hasWater)   payload.care_water = result.care_water;
@@ -175,7 +230,11 @@ export async function generateCare({
   if (!hasFert)    payload.care_fertilizer = result.care_fertilizer;
   if (!hasPrune)   payload.care_pruning = result.care_pruning;
   if (!hasSoil)    payload.soil_description = result.soil_description;
-  if (!hasProp)    payload.propagation_methods_json = result.propagation_techniques;
+
+  // Write propagation methods if we *need* them (db empty or forced) and we have a non-empty array
+  if (!hasProp && (result.propagation_techniques?.length ?? 0) > 0) {
+    payload.propagation_methods_json = result.propagation_techniques;
+  }
 
   if (Object.keys(payload).length) {
     await stage('care_db_write','Saving care details', async () => savePlantsRow(plantId, payload));

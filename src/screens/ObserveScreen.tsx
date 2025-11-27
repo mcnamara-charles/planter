@@ -253,6 +253,10 @@ export default function AddObserveScreen() {
             <LabeledInput label="Height (in)" value={heightIn} onChangeText={setHeightIn} keyboardType="numeric" placeholder="e.g. 12.5" />
             <LabeledInput label="Width (in)" value={widthIn} onChangeText={setWidthIn} keyboardType="numeric" placeholder="e.g. 7.0" />
             <LabeledInput label="Leaf count" value={leafCount} onChangeText={setLeafCount} keyboardType="number-pad" placeholder="e.g. 12" />
+            <View style={styles.switchRow}>
+              <ThemedText style={styles.label}>Rootbound?</ThemedText>
+              <Switch value={isRootbound} onValueChange={setIsRootbound} />
+            </View>
           </Section>
 
           <Section title="Medium">
@@ -298,10 +302,6 @@ export default function AddObserveScreen() {
               </View>
             </View>
             <LabeledInput label="Depth (in)" value={depthIn} onChangeText={setDepthIn} keyboardType="numeric" placeholder="e.g. 2.0" />
-            <View style={styles.switchRow}>
-              <ThemedText style={styles.label}>Rootbound?</ThemedText>
-              <Switch value={isRootbound} onValueChange={setIsRootbound} />
-            </View>
           </Section>
 
           <Section title="Health">

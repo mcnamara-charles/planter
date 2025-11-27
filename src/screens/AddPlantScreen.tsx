@@ -12,6 +12,9 @@ import { supabase } from '@/services/supabaseClient';
 import ParallaxScrollView from '@/components/parallax-scroll-view';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { SpeciesAutocomplete } from '@/components/SpeciesAutocomplete';
+import LocationAutocomplete from '@/components/LocationAutocomplete';
+import { PropagatedByAutocomplete } from '@/components/PropagatedByAutocomplete';
+import DatePicker from '@/components/DatePicker';
 
 export default function AddPlantScreen() {
   const { theme } = useTheme();
@@ -33,6 +36,12 @@ export default function AddPlantScreen() {
     } : null;
   }, [params.plantId, params.identificationPhoto, params.scientificName, params.commonName]);
 
+  // Plant type selection state
+  const [plantType, setPlantType] = useState<'normal' | 'reservoir' | null>('normal');
+
+  // Light source selection state
+  const [lightType, setLightType] = useState<'grow_light' | 'sunlight' | null>('sunlight');
+
   // Species selection state
   const [speciesId, setSpeciesId] = useState<string | null>(null);
   const [speciesCommon, setSpeciesCommon] = useState<string>('');        // <-- COMMON name
@@ -42,7 +51,10 @@ export default function AddPlantScreen() {
   const [propagatedFrom, setPropagatedFrom] = useState('');
   const [acquiredAt, setAcquiredAt] = useState('');
   const [acquiredFrom, setAcquiredFrom] = useState('');
-  const [location, setLocation] = useState('');
+  const [locationId, setLocationId] = useState<string | null>(null);
+  const [locationName, setLocationName] = useState('');
+  const [propagatedFromId, setPropagatedFromId] = useState<string | null>(null);
+  const [propagatedFromName, setPropagatedFromName] = useState('');
   const [potType, setPotType] = useState('');
   const [potHeightIn, setPotHeightIn] = useState('');
   const [potDiameterIn, setPotDiameterIn] = useState('');
@@ -56,6 +68,7 @@ export default function AddPlantScreen() {
   const [hasChanges, setHasChanges] = useState(false);
   const [androidOffset, setAndroidOffset] = useState(0);
   const [identificationDataProcessed, setIdentificationDataProcessed] = useState(false);
+  const [advancedSetupOpen, setAdvancedSetupOpen] = useState(false);
 
   const KEYBOARD_OFFSET = Platform.OS === 'ios' ? 88 : androidOffset;
 
@@ -130,15 +143,45 @@ export default function AddPlantScreen() {
         if (isEdit && params?.userPlantId) {
           const { data: up } = await supabase
             .from('user_plants')
-            .select('plants_table_id, nickname, custom_species_name, propagated_from_user_plant_id, acquired_at, acquired_from, location, pot_type, pot_height_in, pot_diameter_in, drainage_system, soil_mix, default_plant_photo_id')
+            .select(`
+              plants_table_id, nickname, custom_species_name, propagated_from_user_plant_id, acquired_at, acquired_from, location_id, pot_type, pot_height_in, pot_diameter_in, drainage_system, soil_mix, system_type, light_type, default_plant_photo_id, 
+              location:location_id (id, name),
+              propagated_from:propagated_from_user_plant_id (id, nickname, custom_species_name, plants:plants_table_id (plant_name, plant_scientific_name))
+            `)
             .eq('id', params.userPlantId)
             .maybeSingle();
 
           if (up) {
             setNickname(up.nickname ?? '');
             setAcquiredFrom(up.acquired_from ?? '');
-            setLocation(up.location ?? '');
+            setLocationId(up.location_id);
+            setLocationName((up.location as any)?.name ?? '');
             setPropagatedFrom(up.propagated_from_user_plant_id ?? '');
+            setPropagatedFromId(up.propagated_from_user_plant_id);
+            // Set plant type from system_type (normal or reservoir, default to 'normal' if not set)
+            const systemType = (up as any).system_type;
+            if (systemType === 'normal' || systemType === 'reservoir') {
+              setPlantType(systemType);
+            } else {
+              setPlantType('normal'); // Default to normal
+            }
+            // Set light type from light_type (grow_light or sunlight, default to 'sunlight' if not set)
+            const lightTypeValue = (up as any).light_type;
+            if (lightTypeValue === 'grow_light' || lightTypeValue === 'sunlight') {
+              setLightType(lightTypeValue);
+            } else {
+              setLightType('sunlight'); // Default to sunlight
+            }
+            
+            // Set propagated plant name if available
+            if (up.propagated_from_user_plant_id && (up as any).propagated_from) {
+              const propagatedPlant = (up as any).propagated_from;
+              const displayName = propagatedPlant.nickname || 
+                                propagatedPlant.plants?.plant_name || 
+                                propagatedPlant.custom_species_name || 
+                                '';
+              setPropagatedFromName(displayName);
+            }
             setPotType(up.pot_type ?? '');
             setPotHeightIn(up.pot_height_in ? String(up.pot_height_in) : '');
             setPotDiameterIn(up.pot_diameter_in ? String(up.pot_diameter_in) : '');
@@ -221,12 +264,14 @@ export default function AddPlantScreen() {
               propagated_from_user_plant_id: up.propagated_from_user_plant_id ?? null,
               acquired_at: acquiredOn,
               acquired_from: up.acquired_from || null,
-              location: up.location || null,
+              location_id: up.location_id || null,
               pot_type: up.pot_type || null,
               pot_height_in: up.pot_height_in ? Number(up.pot_height_in) : null,
               pot_diameter_in: up.pot_diameter_in ? Number(up.pot_diameter_in) : null,
               drainage_system: up.drainage_system || null,
               soil_mix: normSoil,
+              system_type: (up as any).system_type || null,
+              light_type: (up as any).light_type || null,
             };
           }
         }
@@ -281,12 +326,12 @@ export default function AddPlantScreen() {
       return;
     }
 
-    // YYYY-MM-DD validation
+    // Date validation (DatePicker returns YYYY-MM-DD format)
     let acquiredDate: string | null = null;
     if (acquiredAt.trim().length > 0) {
       const m = acquiredAt.trim().match(/^\d{4}-\d{2}-\d{2}$/);
       if (!m) {
-        Alert.alert('Invalid date', 'Please use YYYY-MM-DD format.');
+        Alert.alert('Invalid date', 'Please select a valid date.');
         return;
       }
       acquiredDate = acquiredAt.trim();
@@ -297,6 +342,25 @@ export default function AddPlantScreen() {
     const plantsTableIdInsert = usePlantsId ? speciesId : null;
     const customSpeciesNameInsert = usePlantsId ? null : (speciesCommon.trim() || null); // <-- use COMMON for custom
 
+    // Handle location - create new location if needed
+    let finalLocationId = locationId;
+    if (locationName.trim() && !locationId) {
+      // User entered a custom location name, create it
+      try {
+        const { data: newLocation, error: createErr } = await supabase
+          .from('locations')
+          .insert({ name: locationName.trim(), owner_id: user.id })
+          .select('id')
+          .single();
+        
+        if (createErr) throw createErr;
+        finalLocationId = newLocation.id;
+      } catch (e) {
+        // If creation fails, continue without location
+        finalLocationId = null;
+      }
+    }
+
     // Build potential payload now to check changes before we flip saving=true
     const usePlantsIdPre = !!speciesId;
     const plants_table_id = usePlantsIdPre ? speciesId : null;
@@ -305,15 +369,17 @@ export default function AddPlantScreen() {
       plants_table_id,
       custom_species_name,
       nickname: nickname || null,
-      propagated_from_user_plant_id: propagatedFrom || null,
+      propagated_from_user_plant_id: propagatedFromId || null,
       acquired_at: acquiredDate,
       acquired_from: acquiredFrom || null,
-      location: location || null,
+      location_id: locationId,
       pot_type: potType || null,
       pot_height_in: potHeightIn ? Number(potHeightIn) : null,
       pot_diameter_in: potDiameterIn ? Number(potDiameterIn) : null,
       drainage_system: drainageSystem || null,
       soil_mix: buildSoilMixObject(soilRows),
+      system_type: plantType || null,
+      light_type: lightType || null,
     } as const;
 
     if (isEdit && initialPayloadRef.current) {
@@ -354,15 +420,17 @@ export default function AddPlantScreen() {
           plants_table_id: plantsTableIdInsert,
           custom_species_name: customSpeciesNameInsert,
           nickname: nickname || null,
-          propagated_from_user_plant_id: propagatedFrom || null,
+          propagated_from_user_plant_id: propagatedFromId || null,
           acquired_at: acquiredDate,
           acquired_from: acquiredFrom || null,
-          location: location || null,
+          location_id: finalLocationId,
           pot_type: potType || null,
           pot_height_in: potHeightIn ? Number(potHeightIn) : null,
           pot_diameter_in: potDiameterIn ? Number(potDiameterIn) : null,
           drainage_system: drainageSystem || null,
           soil_mix: buildSoilMixObject(soilRows),
+          system_type: plantType || null,
+          light_type: lightType || null,
         };
   
         const { data: inserted, error } = await supabase
@@ -449,18 +517,20 @@ export default function AddPlantScreen() {
       plants_table_id: curr_plants_table_id,
       custom_species_name: curr_custom_species_name,
       nickname: nickname || null,
-      propagated_from_user_plant_id: propagatedFrom || null,
+      propagated_from_user_plant_id: propagatedFromId || null,
       acquired_at: acquiredAt.trim().length > 0 ? acquiredAt.trim() : null,
       acquired_from: acquiredFrom || null,
-      location: location || null,
+      location_id: locationId,
       pot_type: potType || null,
       pot_height_in: potHeightIn ? Number(potHeightIn) : null,
       pot_diameter_in: potDiameterIn ? Number(potDiameterIn) : null,
       drainage_system: drainageSystem || null,
       soil_mix: buildSoilMixObject(soilRows),
+      system_type: plantType || null,
+      light_type: lightType || null,
     } as const;
     setHasChanges(JSON.stringify(initialPayloadRef.current) !== JSON.stringify(currentPayload));
-  }, [isEdit, speciesId, speciesCommon, nickname, propagatedFrom, acquiredAt, acquiredFrom, location, potType, potDiameterIn, potHeightIn, drainageSystem, soilRows]);
+  }, [isEdit, speciesId, speciesCommon, nickname, propagatedFromId, acquiredAt, acquiredFrom, locationId, potType, potDiameterIn, potHeightIn, drainageSystem, soilRows, plantType, lightType]);
 
   return (
     <KeyboardAvoidingView 
@@ -488,6 +558,114 @@ export default function AddPlantScreen() {
           </View>
 
           <View style={styles.formContainer}>
+            {/* Plant Type Selector */}
+            <View style={styles.fieldGroup}>
+              <ThemedText style={styles.label}>Plant Type</ThemedText>
+              <View style={styles.plantTypeContainer}>
+                <TouchableOpacity
+                  style={[
+                    styles.plantTypeOption,
+                    { 
+                      backgroundColor: plantType === 'normal' ? theme.colors.primary : theme.colors.input,
+                      borderColor: plantType === 'normal' ? theme.colors.primary : theme.colors.border,
+                    }
+                  ]}
+                  onPress={() => setPlantType('normal')}
+                  accessibilityRole="radio"
+                  accessibilityState={{ selected: plantType === 'normal' }}
+                >
+                  <View style={styles.plantTypeContent}>
+                    <View style={[
+                      styles.plantTypeIconContainer,
+                      { backgroundColor: plantType === 'normal' ? 'rgba(255,255,255,0.2)' : theme.colors.card }
+                    ]}>
+                      <IconSymbol 
+                        name="plant.normal" 
+                        size={28} 
+                        color={plantType === 'normal' ? '#fff' : theme.colors.text} 
+                      />
+                    </View>
+                    <View style={styles.plantTypeTextContainer}>
+                      <ThemedText style={[
+                        styles.plantTypeTitle,
+                        { color: plantType === 'normal' ? '#fff' : theme.colors.text }
+                      ]}>
+                        Normal Plant
+                      </ThemedText>
+                      <ThemedText style={[
+                        styles.plantTypeDescription,
+                        { color: plantType === 'normal' ? 'rgba(255,255,255,0.9)' : theme.colors.mutedText }
+                      ]}>
+                        This plant sits in soil (or other substrate) and is watered and fertilized on a schedule when the substrate is ready for new nutrients.
+                      </ThemedText>
+                    </View>
+                    <View style={[
+                      styles.radioButton,
+                      { 
+                        borderColor: plantType === 'normal' ? '#fff' : theme.colors.border,
+                        backgroundColor: plantType === 'normal' ? '#fff' : 'transparent'
+                      }
+                    ]}>
+                      {plantType === 'normal' && (
+                        <View style={[styles.radioButtonInner, { backgroundColor: theme.colors.primary }]} />
+                      )}
+                    </View>
+                  </View>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[
+                    styles.plantTypeOption,
+                    { 
+                      backgroundColor: plantType === 'reservoir' ? theme.colors.primary : theme.colors.input,
+                      borderColor: plantType === 'reservoir' ? theme.colors.primary : theme.colors.border,
+                    }
+                  ]}
+                  onPress={() => setPlantType('reservoir')}
+                  accessibilityRole="radio"
+                  accessibilityState={{ selected: plantType === 'reservoir' }}
+                >
+                  <View style={styles.plantTypeContent}>
+                    <View style={[
+                      styles.plantTypeIconContainer,
+                      { backgroundColor: plantType === 'reservoir' ? 'rgba(255,255,255,0.2)' : theme.colors.card }
+                    ]}>
+                      <IconSymbol 
+                        name="plant.reservoir" 
+                        size={28} 
+                        color={plantType === 'reservoir' ? '#fff' : theme.colors.text} 
+                      />
+                    </View>
+                    <View style={styles.plantTypeTextContainer}>
+                      <ThemedText style={[
+                        styles.plantTypeTitle,
+                        { color: plantType === 'reservoir' ? '#fff' : theme.colors.text }
+                      ]}>
+                        Reservoir Plant
+                      </ThemedText>
+                      <ThemedText style={[
+                        styles.plantTypeDescription,
+                        { color: plantType === 'reservoir' ? 'rgba(255,255,255,0.9)' : theme.colors.mutedText }
+                      ]}>
+                        This plant sits in a medium that gets its water and nutrients from a reservoir. Water and nutrients are added to the reservoir as it runs out.
+                      </ThemedText>
+                    </View>
+                    <View style={[
+                      styles.radioButton,
+                      { 
+                        borderColor: plantType === 'reservoir' ? '#fff' : theme.colors.border,
+                        backgroundColor: plantType === 'reservoir' ? '#fff' : 'transparent'
+                      }
+                    ]}>
+                      {plantType === 'reservoir' && (
+                        <View style={[styles.radioButtonInner, { backgroundColor: theme.colors.primary }]} />
+                      )}
+                    </View>
+                  </View>
+                </TouchableOpacity>
+              </View>
+            </View>
+
             <View style={styles.fieldGroup}>
               <ThemedText style={styles.label}>Species</ThemedText>
               <SpeciesAutocomplete
@@ -526,6 +704,134 @@ export default function AddPlantScreen() {
               />
             </View>
 
+            <View style={styles.fieldGroup}>
+              <ThemedText style={styles.label}>Location</ThemedText>
+              <LocationAutocomplete
+                selectedItem={locationId ? { id: locationId, name: locationName } : null}
+                displayText={!locationId ? locationName : undefined}
+                onPick={(item) => {
+                  setLocationId(item.id);
+                  setLocationName(item.name);
+                }}
+                onCustomChange={(text) => {
+                  // Handle custom text input - could create new location or clear selection
+                  setLocationName(text);
+                  if (!text.trim()) {
+                    setLocationId(null);
+                  }
+                }}
+                placeholder="Search or enter location name"
+              />
+            </View>
+
+            {/* Light Source Selector */}
+            <View style={styles.fieldGroup}>
+              <ThemedText style={styles.label}>Primary Light Source</ThemedText>
+              <View style={styles.plantTypeContainer}>
+                <TouchableOpacity
+                  style={[
+                    styles.plantTypeOption,
+                    { 
+                      backgroundColor: lightType === 'grow_light' ? theme.colors.primary : theme.colors.input,
+                      borderColor: lightType === 'grow_light' ? theme.colors.primary : theme.colors.border,
+                    }
+                  ]}
+                  onPress={() => setLightType('grow_light')}
+                  accessibilityRole="radio"
+                  accessibilityState={{ selected: lightType === 'grow_light' }}
+                >
+                  <View style={styles.plantTypeContent}>
+                    <View style={[
+                      styles.plantTypeIconContainer,
+                      { backgroundColor: lightType === 'grow_light' ? 'rgba(255,255,255,0.2)' : theme.colors.card }
+                    ]}>
+                      <IconSymbol 
+                        name="light.grow" 
+                        size={28} 
+                        color={lightType === 'grow_light' ? '#fff' : theme.colors.text} 
+                      />
+                    </View>
+                    <View style={styles.plantTypeTextContainer}>
+                      <ThemedText style={[
+                        styles.plantTypeTitle,
+                        { color: lightType === 'grow_light' ? '#fff' : theme.colors.text }
+                      ]}>
+                        Grow Light
+                      </ThemedText>
+                      <ThemedText style={[
+                        styles.plantTypeDescription,
+                        { color: lightType === 'grow_light' ? 'rgba(255,255,255,0.9)' : theme.colors.mutedText }
+                      ]}>
+                        This plant receives its primary light from an artificial grow light source.
+                      </ThemedText>
+                    </View>
+                    <View style={[
+                      styles.radioButton,
+                      { 
+                        borderColor: lightType === 'grow_light' ? '#fff' : theme.colors.border,
+                        backgroundColor: lightType === 'grow_light' ? '#fff' : 'transparent'
+                      }
+                    ]}>
+                      {lightType === 'grow_light' && (
+                        <View style={[styles.radioButtonInner, { backgroundColor: theme.colors.primary }]} />
+                      )}
+                    </View>
+                  </View>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[
+                    styles.plantTypeOption,
+                    { 
+                      backgroundColor: lightType === 'sunlight' ? theme.colors.primary : theme.colors.input,
+                      borderColor: lightType === 'sunlight' ? theme.colors.primary : theme.colors.border,
+                    }
+                  ]}
+                  onPress={() => setLightType('sunlight')}
+                  accessibilityRole="radio"
+                  accessibilityState={{ selected: lightType === 'sunlight' }}
+                >
+                  <View style={styles.plantTypeContent}>
+                    <View style={[
+                      styles.plantTypeIconContainer,
+                      { backgroundColor: lightType === 'sunlight' ? 'rgba(255,255,255,0.2)' : theme.colors.card }
+                    ]}>
+                      <IconSymbol 
+                        name="light.sun" 
+                        size={28} 
+                        color={lightType === 'sunlight' ? '#fff' : theme.colors.text} 
+                      />
+                    </View>
+                    <View style={styles.plantTypeTextContainer}>
+                      <ThemedText style={[
+                        styles.plantTypeTitle,
+                        { color: lightType === 'sunlight' ? '#fff' : theme.colors.text }
+                      ]}>
+                        Sunlight
+                      </ThemedText>
+                      <ThemedText style={[
+                        styles.plantTypeDescription,
+                        { color: lightType === 'sunlight' ? 'rgba(255,255,255,0.9)' : theme.colors.mutedText }
+                      ]}>
+                        This plant receives its primary light from natural sunlight (windows, outdoor, etc.).
+                      </ThemedText>
+                    </View>
+                    <View style={[
+                      styles.radioButton,
+                      { 
+                        borderColor: lightType === 'sunlight' ? '#fff' : theme.colors.border,
+                        backgroundColor: lightType === 'sunlight' ? '#fff' : 'transparent'
+                      }
+                    ]}>
+                      {lightType === 'sunlight' && (
+                        <View style={[styles.radioButtonInner, { backgroundColor: theme.colors.primary }]} />
+                      )}
+                    </View>
+                  </View>
+                </TouchableOpacity>
+              </View>
+            </View>
+
             {/* Photo */}
             <View style={styles.fieldGroup}>
               <ThemedText style={styles.label}>Main Photo</ThemedText>
@@ -561,123 +867,152 @@ export default function AddPlantScreen() {
               )}
             </View>
 
+            {/* Advanced Setup Collapsible */}
             <View style={styles.fieldGroup}>
-              <ThemedText style={styles.label}>Acquired on</ThemedText>
-              <TextInput
-                style={[styles.input, { backgroundColor: theme.colors.input, borderColor: theme.colors.border, color: theme.colors.text }]}
-                value={acquiredAt}
-                onChangeText={setAcquiredAt}
-                placeholder="YYYY-MM-DD"
-                placeholderTextColor={theme.colors.mutedText}
-              />
-            </View>
-
-            <View style={styles.fieldGroup}>
-              <ThemedText style={styles.label}>Acquired from (place)</ThemedText>
-              <TextInput
-                style={[styles.input, { backgroundColor: theme.colors.input, borderColor: theme.colors.border, color: theme.colors.text }]}
-                value={acquiredFrom}
-                onChangeText={setAcquiredFrom}
-                placeholder="Local nursery"
-                placeholderTextColor={theme.colors.mutedText}
-              />
-            </View>
-
-            <View style={styles.fieldGroup}>
-              <ThemedText style={styles.label}>Location</ThemedText>
-              <TextInput
-                style={[styles.input, { backgroundColor: theme.colors.input, borderColor: theme.colors.border, color: theme.colors.text }]}
-                value={location}
-                onChangeText={setLocation}
-                placeholder="Living room window"
-                placeholderTextColor={theme.colors.mutedText}
-              />
-            </View>
-
-            <View style={styles.fieldGroup}>
-              <ThemedText style={styles.label}>Pot type</ThemedText>
-              <TextInput
-                style={[styles.input, { backgroundColor: theme.colors.input, borderColor: theme.colors.border, color: theme.colors.text }]}
-                value={potType}
-                onChangeText={setPotType}
-                placeholder="Terracotta, Nursery pot, etc."
-                placeholderTextColor={theme.colors.mutedText}
-              />
-            </View>
-
-            <View style={styles.fieldGroup}>
-              <ThemedText style={styles.label}>Pot diameter (inches)</ThemedText>
-              <TextInput
-                keyboardType="numeric"
-                style={[styles.input, { backgroundColor: theme.colors.input, borderColor: theme.colors.border, color: theme.colors.text }]}
-                value={potDiameterIn}
-                onChangeText={setPotDiameterIn}
-                placeholder="Number"
-                placeholderTextColor={theme.colors.mutedText}
-              />
-            </View>
-
-            <View style={styles.fieldGroup}>
-              <ThemedText style={styles.label}>Pot height (inches)</ThemedText>
-              <TextInput
-                keyboardType="numeric"
-                style={[styles.input, { backgroundColor: theme.colors.input, borderColor: theme.colors.border, color: theme.colors.text }]}
-                value={potHeightIn}
-                onChangeText={setPotHeightIn}
-                placeholder="Number"
-                placeholderTextColor={theme.colors.mutedText}
-              />
-            </View>
-
-            <View style={styles.fieldGroup}>
-              <ThemedText style={styles.label}>Drainage system</ThemedText>
-              <TextInput
-                style={[styles.input, { backgroundColor: theme.colors.input, borderColor: theme.colors.border, color: theme.colors.text }]}
-                value={drainageSystem}
-                onChangeText={setDrainageSystem}
-                placeholder="Saucer, cachepot, etc."
-                placeholderTextColor={theme.colors.mutedText}
-              />
-            </View>
-
-            <View style={styles.fieldGroup}>
-              <ThemedText style={styles.label}>Soil mix</ThemedText>
-              {soilRows.map((row, idx) => (
-                <View key={row.id} style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
-                  <TextInput
-                    style={[styles.input, { flex: 1, backgroundColor: theme.colors.input, borderColor: theme.colors.border, color: theme.colors.text }]}
-                    value={row.name}
-                    onChangeText={(t) => setSoilRows((r) => r.map((x, i) => i === idx ? { ...x, name: t } : x))}
-                    placeholder="Component"
-                    placeholderTextColor={theme.colors.mutedText}
+              <TouchableOpacity
+                style={styles.advancedHeader}
+                onPress={() => setAdvancedSetupOpen(!advancedSetupOpen)}
+                activeOpacity={0.7}
+              >
+                <View style={styles.advancedHeaderContent}>
+                  <IconSymbol
+                    name={advancedSetupOpen ? 'chevron.down' : 'chevron.right'}
+                    size={20}
+                    color={theme.colors.text}
                   />
-                  <TextInput
-                    keyboardType="numeric"
-                    style={[styles.input, { width: 88, backgroundColor: theme.colors.input, borderColor: theme.colors.border, color: theme.colors.text, textAlign: 'center' }]}
-                    value={row.parts}
-                    onChangeText={(t) => setSoilRows((r) => r.map((x, i) => i === idx ? { ...x, parts: t } : x))}
-                    placeholder="parts"
-                    placeholderTextColor={theme.colors.mutedText}
-                  />
-                  <TouchableOpacity onPress={() => setSoilRows((r) => r.filter((_, i) => i !== idx))} accessibilityLabel="Remove component">
-                    <IconSymbol name="xmark.circle.fill" size={20} color={theme.colors.mutedText} />
-                  </TouchableOpacity>
+                  <ThemedText style={[styles.advancedHeaderText, { color: theme.colors.text }]}>
+                    Advanced setup
+                  </ThemedText>
                 </View>
-              ))}
-              <View style={{ flexDirection: 'row', gap: 12, marginTop: 8 }}>
-                <TouchableOpacity
-                  onPress={() => setSoilRows((r) => [...r, { id: Math.random().toString(36).slice(2), name: '', parts: '' }])}
-                  accessibilityLabel="Add component"
-                  style={styles.textButton}
-                >
-                  <ThemedText style={[styles.textButtonLabel, { color: theme.colors.primary }]}>+ Add</ThemedText>
-                </TouchableOpacity>
-                {soilRows.length > 0 && (
-                  <TouchableOpacity onPress={() => setSoilRows([])} accessibilityLabel="Clear soil mix" style={[styles.smallButton, { backgroundColor: theme.colors.card, borderWidth: StyleSheet.hairlineWidth, borderColor: theme.colors.border }]}>
-                    <ThemedText style={{ fontWeight: '700' }}>Clear</ThemedText>
-                  </TouchableOpacity>
-                )}
-              </View>
+              </TouchableOpacity>
+              {advancedSetupOpen && (
+                <View style={styles.advancedContent}>
+                  <View style={styles.fieldGroup}>
+                    <ThemedText style={styles.label}>Acquired on</ThemedText>
+                    <DatePicker
+                      value={acquiredAt}
+                      onChange={setAcquiredAt}
+                      placeholder="Select date"
+                    />
+                  </View>
+
+                  <View style={styles.fieldGroup}>
+                    <ThemedText style={styles.label}>Acquired from (place)</ThemedText>
+                    <TextInput
+                      style={[styles.input, { backgroundColor: theme.colors.input, borderColor: theme.colors.border, color: theme.colors.text }]}
+                      value={acquiredFrom}
+                      onChangeText={setAcquiredFrom}
+                      placeholder="Local nursery"
+                      placeholderTextColor={theme.colors.mutedText}
+                    />
+                  </View>
+
+                  <View style={styles.fieldGroup}>
+                    <ThemedText style={styles.label}>Propagated from</ThemedText>
+                    <PropagatedByAutocomplete
+                      selectedItem={propagatedFromId ? { id: propagatedFromId, nickname: propagatedFromName, common: '', scientific: '' } : null}
+                      displayText={!propagatedFromId ? propagatedFromName : undefined}
+                      onPick={(item: any) => {
+                        setPropagatedFromId(item.id);
+                        setPropagatedFromName(item.nickname || item.common);
+                      }}
+                      onCustomChange={(text: string) => {
+                        setPropagatedFromName(text);
+                        if (!text.trim()) {
+                          setPropagatedFromId(null);
+                        }
+                      }}
+                      placeholder="Search your plants"
+                    />
+                  </View>
+
+                  <View style={styles.fieldGroup}>
+                    <ThemedText style={styles.label}>Pot type</ThemedText>
+                    <TextInput
+                      style={[styles.input, { backgroundColor: theme.colors.input, borderColor: theme.colors.border, color: theme.colors.text }]}
+                      value={potType}
+                      onChangeText={setPotType}
+                      placeholder="Terracotta, Nursery pot, etc."
+                      placeholderTextColor={theme.colors.mutedText}
+                    />
+                  </View>
+
+                  <View style={styles.fieldGroup}>
+                    <ThemedText style={styles.label}>Pot diameter (inches)</ThemedText>
+                    <TextInput
+                      keyboardType="numeric"
+                      style={[styles.input, { backgroundColor: theme.colors.input, borderColor: theme.colors.border, color: theme.colors.text }]}
+                      value={potDiameterIn}
+                      onChangeText={setPotDiameterIn}
+                      placeholder="Number"
+                      placeholderTextColor={theme.colors.mutedText}
+                    />
+                  </View>
+
+                  <View style={styles.fieldGroup}>
+                    <ThemedText style={styles.label}>Pot height (inches)</ThemedText>
+                    <TextInput
+                      keyboardType="numeric"
+                      style={[styles.input, { backgroundColor: theme.colors.input, borderColor: theme.colors.border, color: theme.colors.text }]}
+                      value={potHeightIn}
+                      onChangeText={setPotHeightIn}
+                      placeholder="Number"
+                      placeholderTextColor={theme.colors.mutedText}
+                    />
+                  </View>
+
+                  <View style={styles.fieldGroup}>
+                    <ThemedText style={styles.label}>Drainage system</ThemedText>
+                    <TextInput
+                      style={[styles.input, { backgroundColor: theme.colors.input, borderColor: theme.colors.border, color: theme.colors.text }]}
+                      value={drainageSystem}
+                      onChangeText={setDrainageSystem}
+                      placeholder="Saucer, cachepot, etc."
+                      placeholderTextColor={theme.colors.mutedText}
+                    />
+                  </View>
+
+                  <View style={styles.fieldGroup}>
+                    <ThemedText style={styles.label}>Soil mix</ThemedText>
+                    {soilRows.map((row, idx) => (
+                      <View key={row.id} style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+                        <TextInput
+                          style={[styles.input, { flex: 1, backgroundColor: theme.colors.input, borderColor: theme.colors.border, color: theme.colors.text }]}
+                          value={row.name}
+                          onChangeText={(t) => setSoilRows((r) => r.map((x, i) => i === idx ? { ...x, name: t } : x))}
+                          placeholder="Component"
+                          placeholderTextColor={theme.colors.mutedText}
+                        />
+                        <TextInput
+                          keyboardType="numeric"
+                          style={[styles.input, { width: 88, backgroundColor: theme.colors.input, borderColor: theme.colors.border, color: theme.colors.text, textAlign: 'center' }]}
+                          value={row.parts}
+                          onChangeText={(t) => setSoilRows((r) => r.map((x, i) => i === idx ? { ...x, parts: t } : x))}
+                          placeholder="parts"
+                          placeholderTextColor={theme.colors.mutedText}
+                        />
+                        <TouchableOpacity onPress={() => setSoilRows((r) => r.filter((_, i) => i !== idx))} accessibilityLabel="Remove component">
+                          <IconSymbol name="xmark.circle.fill" size={20} color={theme.colors.mutedText} />
+                        </TouchableOpacity>
+                      </View>
+                    ))}
+                    <View style={{ flexDirection: 'row', gap: 12, marginTop: 8 }}>
+                      <TouchableOpacity
+                        onPress={() => setSoilRows((r) => [...r, { id: Math.random().toString(36).slice(2), name: '', parts: '' }])}
+                        accessibilityLabel="Add component"
+                        style={styles.textButton}
+                      >
+                        <ThemedText style={[styles.textButtonLabel, { color: theme.colors.primary }]}>+ Add</ThemedText>
+                      </TouchableOpacity>
+                      {soilRows.length > 0 && (
+                        <TouchableOpacity onPress={() => setSoilRows([])} accessibilityLabel="Clear soil mix" style={[styles.smallButton, { backgroundColor: theme.colors.card, borderWidth: StyleSheet.hairlineWidth, borderColor: theme.colors.border }]}>
+                          <ThemedText style={{ fontWeight: '700' }}>Clear</ThemedText>
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                  </View>
+                </View>
+              )}
             </View>
             <TouchableOpacity style={[styles.primaryButton, { backgroundColor: theme.colors.primary, opacity: saving ? 0.6 : (isEdit ? (hasChanges ? 1 : 0.45) : 1) }]} onPress={onSave} disabled={saving}>
               <ThemedText style={styles.primaryLabel}>Save</ThemedText>
@@ -740,4 +1075,52 @@ const styles = StyleSheet.create({
   savingOverlay: { position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.25)' },
   savingCard: { paddingHorizontal: 20, paddingVertical: 18, borderRadius: 12, borderWidth: StyleSheet.hairlineWidth, alignItems: 'center', gap: 10 },
   savingText: { fontWeight: '600' },
+  plantTypeContainer: { gap: 12 },
+  plantTypeOption: { 
+    borderWidth: StyleSheet.hairlineWidth, 
+    borderRadius: 12, 
+    padding: 16,
+    transition: 'all 0.2s',
+  },
+  plantTypeContent: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
+  plantTypeIconContainer: { 
+    width: 56, 
+    height: 56, 
+    borderRadius: 12, 
+    alignItems: 'center', 
+    justifyContent: 'center' 
+  },
+  plantTypeTextContainer: { flex: 1, gap: 4 },
+  plantTypeTitle: { fontSize: 16, fontWeight: '600' },
+  plantTypeDescription: { fontSize: 13, lineHeight: 18 },
+  radioButton: { 
+    width: 22, 
+    height: 22, 
+    borderRadius: 11, 
+    borderWidth: 2, 
+    alignItems: 'center', 
+    justifyContent: 'center',
+    marginTop: 2,
+  },
+  radioButtonInner: { 
+    width: 12, 
+    height: 12, 
+    borderRadius: 6,
+  },
+  advancedHeader: {
+    paddingVertical: 12,
+  },
+  advancedHeaderContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  advancedHeaderText: {
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  advancedContent: {
+    marginTop: 8,
+    paddingLeft: 28,
+  },
 });

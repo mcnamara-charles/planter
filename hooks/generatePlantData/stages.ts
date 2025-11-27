@@ -10,6 +10,8 @@ export const STAGE_LABELS: Record<StageKey,string> = {
   care_fertilizer:'Generating fertilizer plan', care_pruning:'Generating pruning guidance',
   care_soil_description:'Generating soil & mix', care_propagation:'Generating propagation',
   care_db_write:'Saving care details', done:'Finished',
+  schedule_generation: 'Generating schedule defaults',   // ⟵ add
+  schedule_db_write:  'Saving schedule defaults',        // ⟵ add
 };
 
 export function useStages() {

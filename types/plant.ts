@@ -3,6 +3,8 @@ export type Plant = {
   name: string;
   scientificName: string;
   imageUri: string;
+  location?: string;
+  genus?: string;
 };
 
 

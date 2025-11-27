@@ -48,6 +48,7 @@ const MAPPING: Record<string, IconDescriptor> = {
   ellipsis: { lib: 'material', name: 'more-horiz' },
   'person.circle': { lib: 'material', name: 'person' },
   plus: { lib: 'material', name: 'add' },
+  'plus.circle': { lib: 'material', name: 'add-circle' },
   // Account & settings icons
   gearshape: { lib: 'material', name: 'settings' },
   bell: { lib: 'material', name: 'notifications' },
@@ -58,15 +59,29 @@ const MAPPING: Record<string, IconDescriptor> = {
 
   // ---- PlantTimeline event icons (Material) ----
   drop: { lib: 'material', name: 'opacity' }, // water droplet
+  'drop.fill': { lib: 'material', name: 'water-drop' }, // filled water droplet
   bolt: { lib: 'material', name: 'bolt' }, // lightning bolt
   location: { lib: 'material', name: 'place' }, // location pin
   scissors: { lib: 'material', name: 'content-cut' }, // scissors
   clock: { lib: 'material', name: 'schedule' }, // clock/time
   eye: { lib: 'material', name: 'visibility' }, // eye/observe
+  'leaf.fill': { lib: 'material', name: 'eco' }, // filled leaf
 
   // ---- Dashboard icons ----
   'exclamationmark.triangle': { lib: 'material', name: 'warning' }, // warning triangle
   checklist: { lib: 'material', name: 'checklist' }, // checklist
+  
+  // ---- Action icons ----
+  'info.circle': { lib: 'material', name: 'info' }, // info icon
+  'checkmark.circle': { lib: 'material', name: 'check-circle' }, // checkmark icon
+
+  // ---- Plant type icons ----
+  'plant.normal': { lib: 'material', name: 'local-florist' }, // normal plant in pot
+  'plant.reservoir': { lib: 'material', name: 'invert-colors' }, // reservoir/container with liquid
+
+  // ---- Light source icons ----
+  'light.grow': { lib: 'material', name: 'lightbulb' }, // grow light bulb
+  'light.sun': { lib: 'material', name: 'wb-sunny' }, // sunlight/sun
 
   // ---- Entypo addition ----
   // Use this from your app as <IconSymbol name="cycle" />

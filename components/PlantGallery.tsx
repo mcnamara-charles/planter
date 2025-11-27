@@ -11,6 +11,7 @@ import { useTheme } from '@/context/themeContext';
 import { type Plant } from '@/types/plant';
 
 type LayoutPreset = 'gridsmall' | 'gridmed' | 'list';
+type GroupByOption = 'none' | 'location' | 'genus';
 
 type PlantGalleryProps = {
   plants: Plant[];
@@ -34,8 +35,10 @@ type PlantGalleryProps = {
   // Layout
   defaultLayout?: LayoutPreset;    // 'gridsmall' | 'gridmed' | 'list' (default: 'gridmed')
 
-  // Optional title for the row (e.g., "Plants")
-  title?: string;
+  // Group By functionality
+  groupBy?: GroupByOption;         // 'none' | 'location' | 'genus' (default: 'none')
+  onGroupByChange?: (groupBy: GroupByOption) => void;
+  defaultGroupBy?: GroupByOption;  // Initial group by value (default: 'none')
 };
 
 export default function PlantGallery({
@@ -54,7 +57,10 @@ export default function PlantGallery({
   searchPlaceholder = 'Search nickname or species...',
 
   defaultLayout = 'gridmed',
-  title,
+
+  groupBy = 'none',
+  onGroupByChange,
+  defaultGroupBy = 'none',
 }: PlantGalleryProps) {
   const { theme } = useTheme();
 
@@ -65,6 +71,7 @@ export default function PlantGallery({
   const [viewMode, setViewMode] = useState<'grid' | 'list'>(initialView);
   const [gridSize, setGridSize] = useState<'small' | 'medium'>(initialSize);
   const [sizeDropdownOpen, setSizeDropdownOpen] = useState(false);
+  const [groupByDropdownOpen, setGroupByDropdownOpen] = useState(false);
 
   // When toggles are hidden, force the layout defined by defaultLayout
   const effectiveViewMode = enableViewToggle ? viewMode : initialView;
@@ -79,6 +86,55 @@ export default function PlantGallery({
         return { width: '47%' as const }; // 2 columns
     }
   };
+
+  // Helper function to get grouping key for plants
+  const getGroupKey = (plant: Plant): string => {
+    switch (groupBy) {
+      case 'location':
+        return plant.location || 'No Location';
+      case 'genus':
+        return plant.genus || 'Unknown Genus';
+      default:
+        return '';
+    }
+  };
+
+  // Group plants based on current groupBy setting
+  const groupedPlants = useMemo(() => {
+    if (groupBy === 'none') {
+      return { '': plants };
+    }
+
+    const groups: Record<string, Plant[]> = {};
+    plants.forEach(plant => {
+      const key = getGroupKey(plant);
+      if (!groups[key]) {
+        groups[key] = [];
+      }
+      groups[key].push(plant);
+    });
+
+    // Sort groups alphabetically, but put "No Location" and "Unknown Genus" at the bottom
+    const sortedGroups: Record<string, Plant[]> = {};
+    const fallbackKeys = ['No Location', 'Unknown Genus'];
+    
+    // First, add all non-fallback groups in alphabetical order
+    Object.keys(groups)
+      .filter(key => !fallbackKeys.includes(key))
+      .sort()
+      .forEach(key => {
+        sortedGroups[key] = groups[key];
+      });
+    
+    // Then add fallback groups at the bottom
+    fallbackKeys.forEach(fallbackKey => {
+      if (groups[fallbackKey]) {
+        sortedGroups[fallbackKey] = groups[fallbackKey];
+      }
+    });
+
+    return sortedGroups;
+  }, [plants, groupBy]);
 
   const listContent = useMemo(() => {
     if (loading) {
@@ -112,102 +168,157 @@ export default function PlantGallery({
     if (error) return <ThemedText>{error}</ThemedText>;
     if (!plants || plants.length === 0) return <ThemedText>No plants yet.</ThemedText>;
 
+    // Render grouped content
     return (
-      <View style={effectiveViewMode === 'grid' ? styles.grid : styles.list}>
-        {plants.map((item) => (
-          <View key={item.id} style={effectiveViewMode === 'grid' ? getCardContainerStyle() : styles.listItemContainer}>
-            {effectiveViewMode === 'grid' ? (
-              <FavoritePlantCard
-                plant={item}
-                size={effectiveGridSize}
-                onPress={() => onItemPress?.(item)}
-              />
-            ) : (
-              <TouchableOpacity
-                onPress={() => onItemPress?.(item)}
-                style={[styles.listItem, { borderColor: theme.colors.border, backgroundColor: theme.colors.card }]}
-                activeOpacity={0.7}
-              >
-                <Image
-                  source={item.imageUri ? { uri: item.imageUri } : undefined}
-                  style={styles.listItemImage}
-                  contentFit="cover"
-                />
-                <View style={styles.listItemContent}>
-                  <ThemedText style={styles.listItemName}>{item.name}</ThemedText>
-                  <ThemedText style={styles.listItemScientific}>{item.scientificName}</ThemedText>
-                </View>
-                <IconSymbol name="chevron.right" size={20} color={theme.colors.mutedText} />
-              </TouchableOpacity>
+      <View>
+        {Object.entries(groupedPlants).map(([groupKey, groupPlants]) => (
+          <View key={groupKey} style={styles.groupSection}>
+            {groupKey && (
+              <ThemedText style={styles.groupTitle}>{groupKey}</ThemedText>
             )}
+            <View style={effectiveViewMode === 'grid' ? styles.grid : styles.list}>
+              {groupPlants.map((item) => (
+                <View key={item.id} style={effectiveViewMode === 'grid' ? getCardContainerStyle() : styles.listItemContainer}>
+                  {effectiveViewMode === 'grid' ? (
+                    <FavoritePlantCard
+                      plant={item}
+                      size={effectiveGridSize}
+                      onPress={() => onItemPress?.(item)}
+                    />
+                  ) : (
+                    <TouchableOpacity
+                      onPress={() => onItemPress?.(item)}
+                      style={[styles.listItem, { borderColor: theme.colors.border, backgroundColor: theme.colors.card }]}
+                      activeOpacity={0.7}
+                    >
+                      <Image
+                        source={item.imageUri ? { uri: item.imageUri } : undefined}
+                        style={styles.listItemImage}
+                        contentFit="cover"
+                      />
+                      <View style={styles.listItemContent}>
+                        <ThemedText style={styles.listItemName}>{item.name}</ThemedText>
+                        <ThemedText style={styles.listItemScientific}>{item.scientificName}</ThemedText>
+                      </View>
+                      <IconSymbol name="chevron.right" size={20} color={theme.colors.mutedText} />
+                    </TouchableOpacity>
+                  )}
+                </View>
+              ))}
+            </View>
           </View>
         ))}
       </View>
     );
-  }, [plants, loading, error, effectiveViewMode, effectiveGridSize]);
+  }, [plants, loading, error, effectiveViewMode, effectiveGridSize, groupedPlants]);
 
   return (
     <View>
-      {/* Header row: Title + Toggle buttons (optional) */}
-      {(title || enableViewToggle) && (
-        <ThemedView style={styles.titleContainer}>
-          {title ? <ThemedText type="title">{title}</ThemedText> : <View />}
-          {enableViewToggle && (
-            <View style={styles.viewToggle}>
+      {/* Header row: Group By + Toggle buttons */}
+      <ThemedView style={styles.titleContainer}>
+        {/* Group By Dropdown */}
+        <View style={styles.groupByContainer}>
+          <TouchableOpacity
+            style={[styles.groupByButton, { borderColor: theme.colors.border }]}
+            onPress={() => setGroupByDropdownOpen(!groupByDropdownOpen)}
+            accessibilityRole="button"
+            accessibilityLabel="Group by selector"
+          >
+            <ThemedText style={styles.groupByLabel}>
+              Group By: {groupBy === 'none' ? 'No Group' : groupBy === 'location' ? 'By Location' : 'By Genus'}
+            </ThemedText>
+            <IconSymbol name="chevron.down" size={16} color={theme.colors.mutedText} />
+          </TouchableOpacity>
+
+          {groupByDropdownOpen && (
+            <View style={[styles.groupByDropdown, { backgroundColor: theme.colors.card, borderColor: theme.colors.border }]}>
               <TouchableOpacity
+                style={styles.groupByDropdownItem}
                 onPress={() => {
-                  if (viewMode === 'grid') {
-                    setSizeDropdownOpen((s) => !s);
-                  } else {
-                    setViewMode('grid');
-                    setSizeDropdownOpen(false);
-                  }
+                  onGroupByChange?.('none');
+                  setGroupByDropdownOpen(false);
                 }}
-                style={[
-                  styles.gridButton,
-                  { borderColor: theme.colors.border },
-                  effectiveViewMode === 'grid' && { backgroundColor: theme.colors.primary }
-                ]}
               >
-                <IconSymbol
-                  name="grid"
-                  size={18}
-                  color={effectiveViewMode === 'grid' ? '#fff' : theme.colors.text}
-                />
-                {effectiveViewMode === 'grid' && (
-                  <>
-                    <ThemedText style={[styles.sizeLabel, { color: '#fff' }]}>
-                      {effectiveGridSize.charAt(0).toUpperCase()}
-                    </ThemedText>
-                    <IconSymbol
-                      name={sizeDropdownOpen ? 'chevron.up' : 'chevron.down'}
-                      size={12}
-                      color={'#fff'}
-                    />
-                  </>
-                )}
+                <ThemedText style={styles.groupByDropdownText}>No Group</ThemedText>
               </TouchableOpacity>
               <TouchableOpacity
+                style={styles.groupByDropdownItem}
                 onPress={() => {
-                  setViewMode('list');
-                  setSizeDropdownOpen(false);
+                  onGroupByChange?.('location');
+                  setGroupByDropdownOpen(false);
                 }}
-                style={[
-                  styles.toggleButton,
-                  { borderColor: theme.colors.border },
-                  effectiveViewMode === 'list' && { backgroundColor: theme.colors.primary }
-                ]}
               >
-                <IconSymbol
-                  name="list"
-                  size={18}
-                  color={effectiveViewMode === 'list' ? '#fff' : theme.colors.text}
-                />
+                <ThemedText style={styles.groupByDropdownText}>By Location</ThemedText>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.groupByDropdownItem}
+                onPress={() => {
+                  onGroupByChange?.('genus');
+                  setGroupByDropdownOpen(false);
+                }}
+              >
+                <ThemedText style={styles.groupByDropdownText}>By Genus</ThemedText>
               </TouchableOpacity>
             </View>
           )}
-        </ThemedView>
-      )}
+        </View>
+
+        {/* View Toggle */}
+        {enableViewToggle && (
+          <View style={styles.viewToggle}>
+            <TouchableOpacity
+              onPress={() => {
+                if (viewMode === 'grid') {
+                  setSizeDropdownOpen((s) => !s);
+                } else {
+                  setViewMode('grid');
+                  setSizeDropdownOpen(false);
+                }
+              }}
+              style={[
+                styles.gridButton,
+                { borderColor: theme.colors.border },
+                effectiveViewMode === 'grid' && { backgroundColor: theme.colors.primary }
+              ]}
+            >
+              <IconSymbol
+                name="grid"
+                size={18}
+                color={effectiveViewMode === 'grid' ? '#fff' : theme.colors.text}
+              />
+              {effectiveViewMode === 'grid' && (
+                <>
+                  <ThemedText style={[styles.sizeLabel, { color: '#fff' }]}>
+                    {effectiveGridSize.charAt(0).toUpperCase()}
+                  </ThemedText>
+                  <IconSymbol
+                    name={sizeDropdownOpen ? 'chevron.up' : 'chevron.down'}
+                    size={12}
+                    color={'#fff'}
+                  />
+                </>
+              )}
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => {
+                setViewMode('list');
+                setSizeDropdownOpen(false);
+              }}
+              style={[
+                styles.toggleButton,
+                { borderColor: theme.colors.border },
+                effectiveViewMode === 'list' && { backgroundColor: theme.colors.primary }
+              ]}
+            >
+              <IconSymbol
+                name="list"
+                size={18}
+                color={effectiveViewMode === 'list' ? '#fff' : theme.colors.text}
+              />
+            </TouchableOpacity>
+          </View>
+        )}
+      </ThemedView>
 
       {/* Size dropdown */}
       {enableViewToggle && sizeDropdownOpen && (
@@ -268,6 +379,54 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    gap: 12,
+  },
+  groupByContainer: {
+    position: 'relative',
+    flex: 1,
+  },
+  groupByButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 12,
+    paddingVertical: 3,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 8,
+    backgroundColor: 'transparent',
+    height: 36,
+  },
+  groupByLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  groupByDropdown: {
+    position: 'absolute',
+    top: '100%',
+    left: 0,
+    right: 0,
+    marginTop: 4,
+    borderRadius: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+    zIndex: 100,
+    shadowColor: '#000',
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 4,
+  },
+  groupByDropdownItem: {
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: 'rgba(0,0,0,0.1)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 44,
+  },
+  groupByDropdownText: {
+    fontSize: 14,
+    fontWeight: '500',
   },
   searchWrapper: {
     marginTop: 20,               // ⬅️ new
@@ -279,7 +438,7 @@ const styles = StyleSheet.create({
   },
   viewToggle: {
     flexDirection: 'row',
-    gap: 4,
+    gap: 8,
   },
   toggleButton: {
     width: 36,
@@ -370,5 +529,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     padding: 12,
+  },
+  groupSection: {
+    marginBottom: 24,
+  },
+  groupTitle: {
+    fontSize: 22,
+    fontWeight: '700',
+    marginBottom: 16,
+    opacity: 0.9,
   },
 });

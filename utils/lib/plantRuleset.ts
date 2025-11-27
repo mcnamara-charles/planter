@@ -9,10 +9,19 @@ export type CareField =
   | 'soil_description'
   | 'propagation_methods_json';
 
+export type ScheduleField =
+  | 'schedule_same_year_round'
+  | 'active_season_start_date'
+  | 'active_season_end_date'
+  | 'water_interval_days_active'
+  | 'water_interval_days_inactive'
+  | 'fert_interval_days_active'
+  | 'fert_interval_days_inactive';
+
 export type FactsField = 'description' | 'availability' | 'rarity' | 'plant_name';
 
 // Virtual internal (not persisted) upstream node(s)
-export type VirtualField = 'profile';
+export type VirtualField = 'profile' | 'schedule';
 
 export type ForceField = CareField | FactsField | VirtualField;
 
@@ -22,12 +31,20 @@ export type ForceRule = {
 };
 
 // ⚠ Set this to your current bump value
-export const CURRENT_RULESET_VERSION = 2;
+export const CURRENT_RULESET_VERSION = 10;
 
 // Example: you say "only care_light" in the rule…
 export const FORCE_RULES: ForceRule[] = [
   { version: 1, force_update_fields: ['care_light'] },
   { version: 2, force_update_fields: ['care_light'] },
+  { version: 3, force_update_fields: ['care_light'] },
+  { version: 4, force_update_fields: ['care_light', 'propagation_methods_json'] },
+  { version: 5, force_update_fields: ['propagation_methods_json'] },
+  { version: 6, force_update_fields: ['propagation_methods_json'] },
+  { version: 7, force_update_fields: ['propagation_methods_json'] },
+  { version: 8, force_update_fields: ['schedule'] },
+  { version: 9, force_update_fields: ['schedule'] },
+  { version: 10, force_update_fields: ['schedule'] },
 ];
 
 // ------- Dependency graphs -------
@@ -46,6 +63,7 @@ const DOWNSTREAM_GRAPH: Record<ForceField, ForceField[]> = {
   availability: [],
   rarity: [],
   plant_name: [],
+  schedule: [],
 };
 
 // UPSTREAM graph (effect → prerequisites). This is the key bit you asked for.
@@ -54,6 +72,8 @@ const UPSTREAM_GRAPH: Record<ForceField, ForceField[]> = {
   care_light: ['profile'],
   // if we force water directly, we also want profile
   care_water: ['profile'],
+  // if we force schedule directly, we also want profile
+  schedule: [],
 
   // other leaves don’t need the profile by default
   care_temp_humidity: [],

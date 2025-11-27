@@ -1,6 +1,6 @@
 import { Image } from 'expo-image';
 import React, { useEffect, useState, useCallback } from 'react';
-import { StyleSheet, View, TouchableOpacity, RefreshControl, TextInput } from 'react-native';
+import { StyleSheet, View, TouchableOpacity, RefreshControl, TextInput, ActivityIndicator } from 'react-native';
 
 import ParallaxScrollView from '@/components/parallax-scroll-view';
 import { ThemedText } from '@/components/themed-text';
@@ -24,12 +24,17 @@ type UserPlantJoined = {
   nickname: string | null;
   acquired_at: string | null;
   acquired_from: string | null;
-  location: string | null;
+  location_id: string | null;
   default_plant_photo_id: string | null;
   plants: {
     id: string;
     plant_name: string | null;
     plant_scientific_name: string | null;
+    genus: string | null;
+  } | null;
+  location: {
+    id: string;
+    name: string;
   } | null;
   // Supabase returns arrays for joined relations unless it can guarantee 1:1
   photo: JoinedPhotoRow[] | null;
@@ -44,20 +49,8 @@ export default function PlantsScreen() {
   const [refreshing, setRefreshing] = useState(false); // ⬅️ for pull-to-refresh
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
-  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
-  const [gridSize, setGridSize] = useState<'small' | 'medium'>('medium');
-  const [sizeDropdownOpen, setSizeDropdownOpen] = useState(false);
+  const [groupBy, setGroupBy] = useState<'none' | 'location' | 'genus'>('location');
 
-  const getCardContainerStyle = () => {
-    switch (gridSize) {
-      case 'small':
-        return { width: '30%' as const }; // 3 columns
-      case 'medium':
-        return { width: '47%' as const }; // 2 columns
-      default:
-        return { width: '47%' as const };
-    }
-  };
 
   const fetchPlants = useCallback(async () => {
     if (!user?.id) return;
@@ -74,12 +67,17 @@ export default function PlantsScreen() {
           nickname,
           acquired_at,
           acquired_from,
-          location,
+          location_id,
           default_plant_photo_id,
           plants:plants_table_id (
             id,
             plant_name,
-            plant_scientific_name
+            plant_scientific_name,
+            genus
+          ),
+          location:location_id (
+            id,
+            name
           ),
           photo:user_plant_photos!user_plants_default_plant_photo_id_fkey (
             id,
@@ -221,6 +219,8 @@ export default function PlantsScreen() {
           name: displayName,
           scientificName: sci,
           imageUri,
+          location: row.location?.name,
+          genus: ref?.genus || undefined,
         };
       });
 
@@ -249,7 +249,7 @@ export default function PlantsScreen() {
     useCallback(() => {
       fetchPlants();
       return () => {};
-    }, [user?.id, fetchPlants])
+    }, [fetchPlants])
   );
 
   // Pull-to-refresh handler
@@ -268,14 +268,13 @@ export default function PlantsScreen() {
             source={require('../../assets/images/plants-header.jpg')}
             contentFit="cover"
             transition={200}
-            style={styles.headerImage}
+            style={{ width: '100%', height: '100%' }}
           />
         }
         refreshing={refreshing}
         onRefresh={onRefresh}
       >
         <PlantGallery
-          title="Plants"
           plants={plants}
           loading={loading}
           error={error}
@@ -292,6 +291,11 @@ export default function PlantsScreen() {
           // search wired to your server-side filtering
           searchValue={search}
           onSearchChange={setSearch}
+
+          // group by functionality
+          groupBy={groupBy}
+          onGroupByChange={setGroupBy}
+          defaultGroupBy="location"
 
           // navigate on item press
           onItemPress={(p) => (nav as any).navigate('PlantDetail', { id: p.id })}
@@ -319,119 +323,6 @@ export default function PlantsScreen() {
 }
 
 const styles = StyleSheet.create({
-  titleContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  viewToggle: {
-    flexDirection: 'row',
-    gap: 4,
-  },
-  toggleButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 8,
-    borderWidth: StyleSheet.hairlineWidth,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  gridButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 8,
-    paddingVertical: 6,
-    borderRadius: 8,
-    borderWidth: StyleSheet.hairlineWidth,
-    gap: 4,
-    minWidth: 36,
-    height: 36,
-    justifyContent: 'center',
-  },
-  sizeLabel: {
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  sizeDropdown: {
-    position: 'absolute',
-    top: 60,
-    right: 16,
-    zIndex: 100,
-    borderRadius: 8,
-    borderWidth: StyleSheet.hairlineWidth,
-    minWidth: 120,
-    overflow: 'hidden',
-  },
-  sizeDropdownItem: {
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-  },
-  sizeDropdownText: {
-    fontSize: 14,
-    fontWeight: '500',
-  },
-  grid: {
-    paddingTop: 4,
-    paddingBottom: 16,
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 12,
-  },
-  list: {
-    paddingTop: 4,
-    paddingBottom: 16,
-    gap: 8,
-  },
-  searchInput: {
-    borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-  },
-  cardContainer: {
-    flexBasis: '48%',
-    flexGrow: 1,
-  },
-  listItemContainer: {
-    width: '100%',
-  },
-  listItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 12,
-    borderRadius: 12,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(0,0,0,0.1)',
-    backgroundColor: 'rgba(0,0,0,0.05)',
-  },
-  listItemImage: {
-    width: 60,
-    height: 60,
-    borderRadius: 8,
-  },
-  listItemContent: {
-    flex: 1,
-    marginLeft: 12,
-  },
-  listItemName: {
-    fontSize: 16,
-    fontWeight: '600',
-    marginBottom: 4,
-  },
-  listItemScientific: {
-    fontSize: 14,
-    opacity: 0.7,
-    fontStyle: 'italic',
-  },
-  listItemSkeleton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 12,
-  },
-  headerImage: {
-    width: '100%',
-    height: '100%',
-  },
   fab: {
     position: 'absolute',
     right: 16,

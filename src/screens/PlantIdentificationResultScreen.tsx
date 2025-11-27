@@ -286,7 +286,7 @@ export default function PlantIdentificationResultScreen() {
     rarity: '' as Rarity,
     plantsTableId: null as string | null,
     soilDescription: null as string | null,
-    propagationMethods: [] as { method: string; difficulty?: string | null; description?: string | null }[],
+    propagationMethods: [] as { method: string; difficulty?: string | null; description?: string | null; min_days?: number; max_days?: number }[],
     gbifUsageKey: null as number | null,
   });
 
@@ -304,7 +304,7 @@ export default function PlantIdentificationResultScreen() {
   const toggle = (key: NonNullable<typeof openSection>) => setOpenSection((curr) => (curr === key ? null : key));
 
   const { loading: genLoading, data: genData, error: genError, progressEvents, run: generatePlantData } = useGeneratePlantData();
-  const { validationResult, validatePlantData, hideModal } = usePlantDataValidation();
+  const { validationResult, validatePlantData, hideModal, resetValidation } = usePlantDataValidation();
   
   // Track if user declined the update modal
   const [userDeclinedUpdate, setUserDeclinedUpdate] = useState(false);
@@ -464,6 +464,14 @@ export default function PlantIdentificationResultScreen() {
       validatePlantData(plant.plantsTableId);
     }
   }, [plant.plantsTableId, status.loading, validatePlantData]);
+
+  // Reset auto-generation state when candidate changes
+  useEffect(() => {
+    setAutoGenRan(false);
+    setUserDeclinedUpdate(false);
+    setGenModalVisible(false);
+    resetValidation();
+  }, [currentIndex, resetValidation]);
 
   // Auto-run generation when needed (no user click)
   useEffect(() => {
@@ -898,6 +906,11 @@ export default function PlantIdentificationResultScreen() {
                                 </View>
                               </View>
                             </View>
+                            {typeof pm.min_days === 'number' && typeof pm.max_days === 'number' && (
+                              <ThemedText style={{ color: theme.colors.mutedText }}>
+                                Takes between {pm.min_days} and {pm.max_days} days
+                              </ThemedText>
+                            )}
                             {!!pm.description && (
                               <ThemedText style={{ color: theme.colors.mutedText }}>{pm.description}</ThemedText>
                             )}
@@ -946,7 +959,7 @@ export default function PlantIdentificationResultScreen() {
       </Modal>
 
       {/* Modals */}
-      <WaterModal open={modals.water} onClose={() => setModals((m) => ({ ...m, water: false }))} userPlantId={''} onSaved={() => {}} />
+      <WaterModal open={modals.water} onClose={() => setModals((m) => ({ ...m, water: false }))} userPlantIds={[]} onSaved={() => {}} />
       <ConfirmNameModal
         open={(modals as any).confirmName?.open}
         suggested={(modals as any).confirmName?.suggested ?? null}

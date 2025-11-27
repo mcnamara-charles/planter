@@ -12,12 +12,12 @@ type WaterMethod = '' | 'top water' | 'bottom water' | 'soak' | 'misting' | 'flu
 export default function WaterModal({
   open,
   onClose,
-  userPlantId,
+  userPlantIds,
   onSaved,
 }: {
   open: boolean;
   onClose: () => void;
-  userPlantId: string;
+  userPlantIds: string[];
   onSaved?: () => void;
 }) {
   const { theme } = useTheme();
@@ -26,6 +26,7 @@ export default function WaterModal({
   const [method, setMethod] = useState<WaterMethod>('');
   const [waterType, setWaterType] = useState('');
   const [amount, setAmount] = useState('');
+  const plantIds = userPlantIds ?? [];
 
   useEffect(() => {
     if (!open) {
@@ -37,6 +38,10 @@ export default function WaterModal({
   }, [open]);
 
   if (!open) return null;
+  if (!plantIds.length) return null;
+
+  const plantCountLabel =
+    plantIds.length > 1 ? ` (${plantIds.length} plants)` : '';
 
   return (
     <View style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.35)', alignItems: 'center', justifyContent: 'center' }}>
@@ -45,7 +50,7 @@ export default function WaterModal({
         <TouchableOpacity onPress={() => setMethodOpen(false)} style={StyleSheet.absoluteFillObject} />
       ) : null}
       <View style={{ width: '90%', maxWidth: 520, borderRadius: 14, borderWidth: StyleSheet.hairlineWidth, borderColor: theme.colors.border, backgroundColor: theme.colors.card, padding: 16, position: 'relative', zIndex: 2 }}>
-        <ThemedText type="title">Log watering</ThemedText>
+        <ThemedText type="title">Log watering{plantCountLabel}</ThemedText>
         <View style={{ height: 8 }} />
         <ThemedText style={{ fontWeight: '700' }}>Method</ThemedText>
         <View style={{ position: 'relative', marginTop: 6 }}>
@@ -126,16 +131,28 @@ export default function WaterModal({
           </TouchableOpacity>
           <TouchableOpacity
             onPress={async () => {
-              if (!user?.id) { onClose(); return; }
-              if (!method) { return; }
+              if (!user?.id) {
+                onClose();
+                return;
+              }
+              if (!method || !plantIds.length) {
+                return;
+              }
               try {
-                await supabase.from('user_plant_timeline_events').insert({
+                const now = new Date().toISOString();
+                const rows = plantIds.map((id) => ({
                   owner_id: user.id,
-                  user_plant_id: userPlantId,
+                  user_plant_id: id,
                   event_type: 'water',
-                  event_data: { method, water_type: waterType || null, amount: amount || null },
+                  event_time: now,
+                  event_data: {
+                    method,
+                    water_type: waterType || null,
+                    amount: amount || null,
+                  },
                   note: null,
-                });
+                }));
+                await supabase.from('user_plant_timeline_events').insert(rows);
                 onClose();
                 onSaved?.();
               } catch {}
