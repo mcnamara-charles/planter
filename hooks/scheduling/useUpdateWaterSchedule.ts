@@ -6,6 +6,7 @@ import {
   upsertUserPlantSchedule,
   ScheduleEventType,
   fetchLatestEffectiveWateringEvent,
+  coordinateFertilizeWithWater,
 } from '@/services/supabaseSchedules';
 
 const NS = '[useUpdatePlantSchedule]';
@@ -87,13 +88,22 @@ type IntervalPick = (args: {
   water_interval_days_inactive: number | null;
   fert_interval_days_active: number | null;
   fert_interval_days_inactive: number | null;
+  water_delay: number | null;
 }) => number | null;
 
 const pickWaterInterval: IntervalPick = ({
   activeNow,
   water_interval_days_active,
   water_interval_days_inactive,
-}) => (activeNow ? water_interval_days_active ?? null : water_interval_days_inactive ?? null);
+  water_delay,
+}) => {
+  // If water_delay is set in user_plants, use that instead of the default intervals
+  if (water_delay !== null && water_delay !== undefined) {
+    return water_delay;
+  }
+  // Otherwise, use the default active/inactive intervals
+  return activeNow ? water_interval_days_active ?? null : water_interval_days_inactive ?? null;
+};
 
 const pickFertInterval: IntervalPick = ({
   activeNow,
@@ -114,6 +124,55 @@ function makeUseUpdateSchedule(eventType: ScheduleEventType, pickInterval: Inter
         const sched = await fetchPlantSchedulingFieldsByUserPlant(userPlantId);
         if (!sched) throw new Error('Plant scheduling fields not found');
 
+        // For reservoir plants: skip water schedules entirely
+        if (eventType === 'water' && sched.system_type === 'reservoir') {
+          // eslint-disable-next-line no-console
+          console.log(`${NS}(${eventType}:${userPlantId}) reservoir plant - skipping water schedule`);
+          return null;
+        }
+
+        // For reservoir plants: always set fertilize to 7 days
+        if (eventType === 'fertilize' && sched.system_type === 'reservoir') {
+          const today = atStartOfTodayLocal();
+          const intervalDays = 7; // Always 7 days for reservoir plants
+          
+          // Get last fertilize event
+          const last = await fetchLatestTimelineByType(userPlantId, 'fertilize');
+          let nextAt = today;
+          let reason: 'initial' | 'due' | 'projected' = 'initial';
+
+          if (last?.event_time) {
+            const lastAt = new Date(last.event_time);
+            const lastMidnightLocal = new Date(lastAt);
+            lastMidnightLocal.setHours(0, 0, 0, 0);
+            const todayMidnightLocal = new Date(today);
+            todayMidnightLocal.setHours(0, 0, 0, 0);
+
+            const daysSince = Math.floor(
+              (todayMidnightLocal.getTime() - lastMidnightLocal.getTime()) / (1000 * 60 * 60 * 24)
+            );
+
+            if (daysSince >= intervalDays) {
+              reason = 'due';
+              nextAt = today;
+            } else {
+              reason = 'projected';
+              nextAt = addDaysLocal(lastMidnightLocal, intervalDays);
+              if (nextAt < today) nextAt = today;
+            }
+          }
+
+          const saved = await upsertUserPlantSchedule({
+            userPlantId,
+            eventType: 'fertilize',
+            nextRunAt: nextAt.toISOString(),
+            eventData: { reason, activeNow: true, intervalDays, isReservoir: true },
+          });
+
+          // For reservoir plants, no coordination needed (they only have fertilize)
+          return saved;
+        }
+
         const today = atStartOfTodayLocal();
         // If plant uses grow lights, always treat as active season (grow lights provide consistent light year-round)
         const activeNow = sched.light_type === 'grow_light' 
@@ -131,6 +190,7 @@ function makeUseUpdateSchedule(eventType: ScheduleEventType, pickInterval: Inter
           water_interval_days_inactive: sched.water_interval_days_inactive ?? null,
           fert_interval_days_active: sched.fert_interval_days_active ?? null,
           fert_interval_days_inactive: sched.fert_interval_days_inactive ?? null,
+          water_delay: sched.water_delay ?? null,
         });
 
         // If nothing configured during inactive season, schedule for next active season start
@@ -193,6 +253,21 @@ function makeUseUpdateSchedule(eventType: ScheduleEventType, pickInterval: Inter
           nextRunAt: nextAt.toISOString(),
           eventData: { reason, activeNow, intervalDays },
         });
+
+        // 4) Coordinate with the other event type (fertilize/water)
+        // If we just updated water, coordinate fertilize
+        // If we just updated fertilize, coordinate with water
+        // Always coordinate after updating either schedule
+        try {
+          await coordinateFertilizeWithWater(userPlantId);
+          // eslint-disable-next-line no-console
+          console.log(`${NS}(${eventType}:${userPlantId}) coordination completed`);
+        } catch (err: any) {
+          // eslint-disable-next-line no-console
+          console.warn(`${NS}(${eventType}:${userPlantId}) coordination error`, err);
+          // Don't throw - coordination failure shouldn't break the update
+          // But log it so we can see what's happening
+        }
 
         return saved;
       } catch (e: any) {

@@ -3,6 +3,7 @@ import { View, TouchableOpacity, StyleSheet } from 'react-native';
 import { ThemedText } from '@/components/themed-text';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { useTheme } from '@/context/themeContext';
+import LineageIndicator from './LineageIndicator';
 
 export default function TopBar({
   title,
@@ -13,6 +14,9 @@ export default function TopBar({
   hideActions,
   showUpdateButton,
   onUpdate,
+  lineage,
+  lightType,
+  systemType,
 }: {
   title: string;
   isFavorite: boolean;
@@ -22,6 +26,9 @@ export default function TopBar({
   hideActions?: boolean;
   showUpdateButton?: boolean;
   onUpdate?: () => void;
+  lineage?: string | null;
+  lightType?: 'grow_light' | 'sunlight' | null;
+  systemType?: 'normal' | 'reservoir' | null;
 }) {
   const { theme } = useTheme();
   return (
@@ -30,6 +37,11 @@ export default function TopBar({
         <TouchableOpacity style={styles.iconBtn} accessibilityRole="button" accessibilityLabel="Go back" onPress={onBack}>
           <IconSymbol name="arrow.left" color={theme.colors.text} size={20} />
         </TouchableOpacity>
+        {(lineage || lightType === 'grow_light' || systemType === 'reservoir') && (
+          <View style={styles.lineageWrapper}>
+            <LineageIndicator lineage={lineage} lightType={lightType} systemType={systemType} textSize={10} iconSize={10} />
+          </View>
+        )}
         <ThemedText style={[styles.topTitle, !hideActions && { marginRight: 15 }]} numberOfLines={1} ellipsizeMode="tail">
           {title}
         </ThemedText>
@@ -67,6 +79,7 @@ const styles = StyleSheet.create({
   topBar: { height: 56, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: StyleSheet.hairlineWidth },
   leftGroup: { flexDirection: 'row', alignItems: 'center', flexShrink: 1 },
   iconBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center', marginRight: 4 },
+  lineageWrapper: { marginRight: 8 },
   rightGroup: { flexDirection: 'row', alignItems: 'center', gap: 0 },
   topTitle: { fontWeight: '600', fontSize: 18, lineHeight: 20, includeFontPadding: false as any, flexShrink: 1, minWidth: 0 },
 });

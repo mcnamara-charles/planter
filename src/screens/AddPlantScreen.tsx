@@ -15,6 +15,7 @@ import { SpeciesAutocomplete } from '@/components/SpeciesAutocomplete';
 import LocationAutocomplete from '@/components/LocationAutocomplete';
 import { PropagatedByAutocomplete } from '@/components/PropagatedByAutocomplete';
 import DatePicker from '@/components/DatePicker';
+import { useUpdateWaterSchedule, useUpdateFertilizeSchedule } from '@/hooks/scheduling/useUpdateWaterSchedule';
 
 export default function AddPlantScreen() {
   const { theme } = useTheme();
@@ -25,6 +26,8 @@ export default function AddPlantScreen() {
   const isEdit = !!editingId;
   const params = (route.params as any) || {};
   const { user } = useAuth();
+  const { updateOne: updateWaterSchedule } = useUpdateWaterSchedule();
+  const { updateOne: updateFertilizeSchedule } = useUpdateFertilizeSchedule();
 
   // Handle identification parameters
   const identificationData = useMemo(() => {
@@ -55,6 +58,10 @@ export default function AddPlantScreen() {
   const [locationName, setLocationName] = useState('');
   const [propagatedFromId, setPropagatedFromId] = useState<string | null>(null);
   const [propagatedFromName, setPropagatedFromName] = useState('');
+  const [propagatedFromLineage, setPropagatedFromLineage] = useState<string | null>(null);
+  const [propagatedFromLightType, setPropagatedFromLightType] = useState<'grow_light' | 'sunlight' | null>(null);
+  const [propagatedFromSystemType, setPropagatedFromSystemType] = useState<'normal' | 'reservoir' | null>(null);
+  const [lineage, setLineage] = useState<string>('');
   const [potType, setPotType] = useState('');
   const [potHeightIn, setPotHeightIn] = useState('');
   const [potDiameterIn, setPotDiameterIn] = useState('');
@@ -144,9 +151,9 @@ export default function AddPlantScreen() {
           const { data: up } = await supabase
             .from('user_plants')
             .select(`
-              plants_table_id, nickname, custom_species_name, propagated_from_user_plant_id, acquired_at, acquired_from, location_id, pot_type, pot_height_in, pot_diameter_in, drainage_system, soil_mix, system_type, light_type, default_plant_photo_id, 
+              plants_table_id, nickname, custom_species_name, propagated_from_user_plant_id, acquired_at, acquired_from, location_id, pot_type, pot_height_in, pot_diameter_in, drainage_system, soil_mix, system_type, light_type, default_plant_photo_id, lineage,
               location:location_id (id, name),
-              propagated_from:propagated_from_user_plant_id (id, nickname, custom_species_name, plants:plants_table_id (plant_name, plant_scientific_name))
+              propagated_from:propagated_from_user_plant_id (id, nickname, custom_species_name, lineage, light_type, system_type, plants:plants_table_id (plant_name, plant_scientific_name))
             `)
             .eq('id', params.userPlantId)
             .maybeSingle();
@@ -181,7 +188,11 @@ export default function AddPlantScreen() {
                                 propagatedPlant.custom_species_name || 
                                 '';
               setPropagatedFromName(displayName);
+              setPropagatedFromLineage(propagatedPlant.lineage || null);
+              setPropagatedFromLightType(propagatedPlant.light_type || null);
+              setPropagatedFromSystemType(propagatedPlant.system_type || null);
             }
+            setLineage((up as any).lineage ?? '');
             setPotType(up.pot_type ?? '');
             setPotHeightIn(up.pot_height_in ? String(up.pot_height_in) : '');
             setPotDiameterIn(up.pot_diameter_in ? String(up.pot_diameter_in) : '');
@@ -272,6 +283,7 @@ export default function AddPlantScreen() {
               soil_mix: normSoil,
               system_type: (up as any).system_type || null,
               light_type: (up as any).light_type || null,
+              lineage: (up as any).lineage || null,
             };
           }
         }
@@ -380,6 +392,7 @@ export default function AddPlantScreen() {
       soil_mix: buildSoilMixObject(soilRows),
       system_type: plantType || null,
       light_type: lightType || null,
+      lineage: lineage.trim() || null,
     } as const;
 
     if (isEdit && initialPayloadRef.current) {
@@ -412,6 +425,18 @@ export default function AddPlantScreen() {
           .eq('id', currentPlantId);
         if (updErr) throw updErr;
 
+        // If system_type or light_type changed, rebuild schedules for this plant
+        const systemTypeChanged = prev.system_type !== nextPayload.system_type;
+        const lightTypeChanged = prev.light_type !== nextPayload.light_type;
+        
+        if (systemTypeChanged || lightTypeChanged) {
+          // Rebuild schedules in background (don't wait)
+          Promise.all([
+            updateWaterSchedule(currentPlantId).catch(() => {}),
+            updateFertilizeSchedule(currentPlantId).catch(() => {}),
+          ]).catch(() => {});
+        }
+
         await createTimelineEvent({ userPlantId: currentPlantId, type: 'edited' });
       } else {
         // INSERT
@@ -431,6 +456,7 @@ export default function AddPlantScreen() {
           soil_mix: buildSoilMixObject(soilRows),
           system_type: plantType || null,
           light_type: lightType || null,
+          lineage: lineage.trim() || null,
         };
   
         const { data: inserted, error } = await supabase
@@ -528,9 +554,10 @@ export default function AddPlantScreen() {
       soil_mix: buildSoilMixObject(soilRows),
       system_type: plantType || null,
       light_type: lightType || null,
+      lineage: lineage.trim() || null,
     } as const;
     setHasChanges(JSON.stringify(initialPayloadRef.current) !== JSON.stringify(currentPayload));
-  }, [isEdit, speciesId, speciesCommon, nickname, propagatedFromId, acquiredAt, acquiredFrom, locationId, potType, potDiameterIn, potHeightIn, drainageSystem, soilRows, plantType, lightType]);
+  }, [isEdit, speciesId, speciesCommon, nickname, propagatedFromId, acquiredAt, acquiredFrom, locationId, potType, potDiameterIn, potHeightIn, drainageSystem, soilRows, plantType, lightType, lineage]);
 
   return (
     <KeyboardAvoidingView 
@@ -910,11 +937,22 @@ export default function AddPlantScreen() {
                   <View style={styles.fieldGroup}>
                     <ThemedText style={styles.label}>Propagated from</ThemedText>
                     <PropagatedByAutocomplete
-                      selectedItem={propagatedFromId ? { id: propagatedFromId, nickname: propagatedFromName, common: '', scientific: '' } : null}
+                      selectedItem={propagatedFromId ? { 
+                        id: propagatedFromId, 
+                        nickname: propagatedFromName, 
+                        common: '', 
+                        scientific: '',
+                        lineage: propagatedFromLineage,
+                        lightType: propagatedFromLightType,
+                        systemType: propagatedFromSystemType,
+                      } : null}
                       displayText={!propagatedFromId ? propagatedFromName : undefined}
                       onPick={(item: any) => {
                         setPropagatedFromId(item.id);
                         setPropagatedFromName(item.nickname || item.common);
+                        setPropagatedFromLineage(item.lineage || null);
+                        setPropagatedFromLightType(item.lightType || null);
+                        setPropagatedFromSystemType(item.systemType || null);
                       }}
                       onCustomChange={(text: string) => {
                         setPropagatedFromName(text);
@@ -923,6 +961,17 @@ export default function AddPlantScreen() {
                         }
                       }}
                       placeholder="Search your plants"
+                    />
+                  </View>
+
+                  <View style={styles.fieldGroup}>
+                    <ThemedText style={styles.label}>Lineage</ThemedText>
+                    <TextInput
+                      style={[styles.input, { backgroundColor: theme.colors.input, borderColor: theme.colors.border, color: theme.colors.text }]}
+                      value={lineage}
+                      onChangeText={setLineage}
+                      placeholder="e.g., A, A1, A1-2-8"
+                      placeholderTextColor={theme.colors.mutedText}
                     />
                   </View>
 

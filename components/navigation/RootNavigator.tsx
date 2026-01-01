@@ -31,6 +31,7 @@ import SickPlantsScreen from '@/src/screens/SickPlantsScreen';
 import ToDoScreen from '@/src/screens/ToDoScreen';
 import InspectionScreen from '@/src/screens/InspectionScreen';
 import LocationsScreen from '@/src/screens/LocationsScreen';
+import ExploreScreen from '@/src/screens/ExploreScreen';
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -235,6 +236,7 @@ export default function RootNavigator() {
             <Stack.Screen name="ToDo" component={ToDoScreen as any} />
             <Stack.Screen name="Inspection" component={InspectionScreen as any} />
             <Stack.Screen name="Locations" component={LocationsScreen as any} />
+            <Stack.Screen name="Explore" component={ExploreScreen as any} />
           </>
         )}
       </Stack.Navigator>

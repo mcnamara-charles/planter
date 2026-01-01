@@ -25,9 +25,11 @@ import { useUpdateWaterSchedule, useUpdateFertilizeSchedule } from '@/hooks/sche
 import SkeletonTile from '@/components/SkeletonTile';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import ParallaxScrollView from '@/components/parallax-scroll-view';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import WaterModal from '@/components/WaterModal';
 import FertilizeModal from '@/components/FertilizeModal';
+import CareModal from '@/components/CareModal';
+import LineageIndicator from '@/components/LineageIndicator';
 
 type ScheduleItem = {
   id: string;
@@ -38,6 +40,11 @@ type ScheduleItem = {
   plantName: string;
   locationId: string | null;
   locationName: string;
+  lineage?: string | null;
+  lightType?: 'grow_light' | 'sunlight' | null;
+  systemType?: 'normal' | 'reservoir' | null;
+  waterDelay?: number | null;
+  plantsTableId?: string | null;
 };
 
 type CombinedSchedule = {
@@ -46,8 +53,14 @@ type CombinedSchedule = {
   plantName: string;
   locationId: string | null;
   locationName: string;
+  lineage?: string | null;
+  lightType?: 'grow_light' | 'sunlight' | null;
+  systemType?: 'normal' | 'reservoir' | null;
   schedules: Record<string, ScheduleItem>;
   earliestNextRunAt: number;
+  waterDelay?: number | null;
+  isDefaultDelay?: boolean;
+  plantsTableId?: string | null;
 };
 
 type DelayModalState = {
@@ -71,6 +84,10 @@ type ScheduleQueryRow = {
     nickname: string | null;
     default_plant_photo_id: string | null;
     plants_table_id: string | null;
+    system_type: string | null;
+    water_delay: number | null;
+    lineage: string | null;
+    light_type: string | null;
     plants: { plant_name: string | null } | null;
     location: { id: string; name: string | null } | null;
   };
@@ -118,9 +135,16 @@ const CombinedScheduleCard = memo(function CombinedScheduleCard({
   onDelayPressPlant,
   eventSummaries,
   onCarePress,
+  lineage,
+  lightType,
+  systemType,
+  combined,
 }: {
   plantNickname: string;
   plantName: string;
+  lineage?: string | null;
+  lightType?: 'grow_light' | 'sunlight' | null;
+  systemType?: 'normal' | 'reservoir' | null;
   imageUrl: string | undefined;
   cardColor: string;
   borderColor: string;
@@ -132,7 +156,8 @@ const CombinedScheduleCard = memo(function CombinedScheduleCard({
   onInfoPress: () => void;
   onDelayPressPlant: () => void;
   eventSummaries: EventSummary[];
-  onCarePress: (schedule: ScheduleItem) => void;
+  onCarePress: (schedule: ScheduleItem, isWatering?: boolean, systemType?: 'normal' | 'reservoir' | null) => void;
+  combined: CombinedSchedule;
 }) {
   const [imageLoaded, setImageLoaded] = useState(false);
 
@@ -197,32 +222,130 @@ const CombinedScheduleCard = memo(function CombinedScheduleCard({
 
         <View style={styles.cardContent}>
           <View style={styles.cardHeader}>
-            <ThemedText style={styles.plantName}>
-              {plantNickname || plantName}
-            </ThemedText>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              {(lineage || lightType === 'grow_light' || systemType === 'reservoir') && (
+                <LineageIndicator lineage={lineage} lightType={lightType} systemType={systemType} textSize={10} iconSize={10} />
+              )}
+              <ThemedText style={styles.plantName}>
+                {plantNickname || plantName}
+              </ThemedText>
+            </View>
           </View>
+          
+          {/* Water Delay Display */}
+          {combined.waterDelay !== null && combined.waterDelay !== undefined && (
+            <View style={styles.delayIndicator}>
+              <View style={[
+                styles.delayBadge,
+                { 
+                  backgroundColor: combined.isDefaultDelay 
+                    ? 'rgba(107, 114, 128, 0.12)' 
+                    : 'rgba(59, 130, 246, 0.12)',
+                  borderColor: combined.isDefaultDelay 
+                    ? 'rgba(107, 114, 128, 0.3)' 
+                    : 'rgba(59, 130, 246, 0.3)',
+                }
+              ]}>
+                <IconSymbol
+                  name="clock"
+                  size={12}
+                  color={combined.isDefaultDelay ? '#6B7280' : '#3B82F6'}
+                />
+                <ThemedText style={[
+                  styles.delayText,
+                  { color: combined.isDefaultDelay ? '#6B7280' : '#3B82F6' }
+                ]}>
+                  {combined.waterDelay} {combined.waterDelay === 1 ? 'day' : 'days'}
+                </ThemedText>
+                <ThemedText style={[
+                  styles.delayLabel,
+                  { color: combined.isDefaultDelay ? '#9CA3AF' : '#60A5FA' }
+                ]}>
+                  {combined.isDefaultDelay ? 'Default' : 'Custom'}
+                </ThemedText>
+              </View>
+            </View>
+          )}
+          
           <View style={styles.eventSummaryList}>
             {eventSummaries.map((summary: EventSummary) => {
               const {
                 eventType,
+                label,
+                dateText,
                 combinedText,
                 pillBackground,
                 pillBorderColor,
                 pillTextColor,
+                isToday,
+                isTomorrow,
               } =
                 summary;
+              
+              // Determine icon based on event type
+              let iconName: string;
+              let displayLabel: string;
+              if (eventType === 'water_fertilize') {
+                iconName = 'leaf.fill';
+                displayLabel = 'Fertilize & Water';
+              } else if (eventType === 'water') {
+                iconName = 'drop.fill';
+                displayLabel = label;
+              } else {
+                iconName = 'leaf.fill';
+                displayLabel = label;
+              }
+              
+              // Determine urgency indicator color
+              const urgencyColor = isToday
+                ? '#10B981' // Green for today
+                : isTomorrow
+                ? '#F59E0B' // Orange for tomorrow
+                : '#6B7280'; // Gray for later
+              
               return (
                 <View key={eventType} style={styles.eventSummaryRow}>
+                  {/* Urgency indicator dot */}
                   <View
                     style={[
-                      styles.duePill,
-                      { backgroundColor: pillBackground, borderColor: pillBorderColor },
+                      styles.urgencyDot,
+                      { backgroundColor: urgencyColor },
+                    ]}
+                  />
+                  
+                  {/* Event icon */}
+                  <View
+                    style={[
+                      styles.eventIconContainer,
+                      { backgroundColor: pillBackground },
                     ]}
                   >
+                    <IconSymbol
+                      name={iconName as any}
+                      size={14}
+                      color={pillTextColor}
+                    />
+                  </View>
+                  
+                  {/* Event label and date */}
+                  <View style={styles.eventTextContainer}>
                     <ThemedText
-                      style={[styles.duePillText, { color: pillTextColor }]}
+                      style={[
+                        styles.eventLabel,
+                        { color: pillTextColor },
+                        (isToday || isTomorrow) && styles.eventLabelBold,
+                      ]}
                     >
-                      {combinedText}
+                      {displayLabel}
+                    </ThemedText>
+                    <ThemedText
+                      style={[
+                        styles.eventDate,
+                        { color: pillTextColor },
+                        { opacity: 0.8 },
+                      ]}
+                    >
+                      {dateText}
                     </ThemedText>
                   </View>
                 </View>
@@ -253,11 +376,40 @@ const CombinedScheduleCard = memo(function CombinedScheduleCard({
           {eventSummaries.map((summary: EventSummary) => {
             const { eventType, label, schedule } = summary;
             if (!schedule) return null;
+            
+            // Handle combined water_fertilize event
+            if (eventType === 'water_fertilize') {
+              // For combined events, only open fertilize modal with isWatering=true
+              // Note: Combined events shouldn't happen for reservoir plants, but handle it anyway
+              const fertSched = combined.schedules['fertilize'];
+              return (
+                <Pressable
+                  key={eventType}
+                  style={styles.actionButton}
+                  onPress={() => {
+                    // Only open fertilize modal with isWatering=true
+                    if (fertSched) {
+                      onCarePress(fertSched, true, systemType);
+                    }
+                  }}
+                >
+                  <IconSymbol
+                    name="leaf.fill"
+                    size={24}
+                    color={textColor}
+                  />
+                  <ThemedText style={styles.actionButtonText}>
+                    {label}
+                  </ThemedText>
+                </Pressable>
+              );
+            }
+            
             return (
               <Pressable
                 key={eventType}
                 style={styles.actionButton}
-                onPress={() => onCarePress(schedule)}
+                onPress={() => onCarePress(schedule, false, systemType)}
               >
                 <IconSymbol
                   name={eventType === 'water' ? 'drop.fill' : 'leaf.fill'}
@@ -265,7 +417,7 @@ const CombinedScheduleCard = memo(function CombinedScheduleCard({
                   color={textColor}
                 />
                 <ThemedText style={styles.actionButtonText}>
-                  {label}
+                  {systemType === 'reservoir' && eventType === 'fertilize' ? 'Care' : label}
                 </ThemedText>
               </Pressable>
             );
@@ -286,11 +438,15 @@ export default function ScheduleScreen() {
   const { updateOne: updateFertilizeSchedule } = useUpdateFertilizeSchedule();
 
   const [schedules, setSchedules] = useState<ScheduleItem[]>([]);
+  const defaultDelaysRef = useRef<Record<string, number | null>>({});
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [rebuildModalVisible, setRebuildModalVisible] = useState(false);
   const [openLocations, setOpenLocations] = useState<Record<string, boolean>>(
     {}
+  );
+  const [openFutureSections, setOpenFutureSections] = useState<Record<string, boolean>>(
+    {} // Closed by default
   );
   const [expandedCardId, setExpandedCardId] = useState<string | null>(null);
   const [delayModal, setDelayModal] = useState<DelayModalState>({
@@ -303,6 +459,8 @@ export default function ScheduleScreen() {
   const [delayDays, setDelayDays] = useState(1);
   const [waterModalOpen, setWaterModalOpen] = useState(false);
   const [fertilizeModalOpen, setFertilizeModalOpen] = useState(false);
+  const [careModalOpen, setCareModalOpen] = useState(false);
+  const [fertilizeModalIsWatering, setFertilizeModalIsWatering] = useState(false);
   const [selectedUserPlantIds, setSelectedUserPlantIds] = useState<string[]>([]);
   const [selectedEventType, setSelectedEventType] = useState<
     'water' | 'fertilize' | ''
@@ -352,10 +510,12 @@ export default function ScheduleScreen() {
       metaReadyRef.current = false;
   
       // 0) Get all user_plant ids for the user (ground truth of "your plants")
+      // Exclude deceased plants
       const { data: upRows, count: upCount, error: upErr } = await supabase
         .from('user_plants')
         .select('id', { count: 'exact' })
         .eq('owner_id', user.id)
+        .is('deceased_at', null) // Exclude deceased plants
         .order('created_at', { ascending: true })
         .range(0, 9999);
   
@@ -376,6 +536,11 @@ export default function ScheduleScreen() {
             nickname,
             default_plant_photo_id,
             plants_table_id,
+            system_type,
+            lineage,
+            light_type,
+            water_delay,
+            deceased_at,
             plants:plants_table_id ( plant_name ),
             location:location_id ( id, name )
           )
@@ -397,15 +562,22 @@ export default function ScheduleScreen() {
             nickname,
             default_plant_photo_id,
             plants_table_id,
+            system_type,
+            lineage,
+            light_type,
+            water_delay,
+            deceased_at,
             plants:plants_table_id ( plant_name ),
             location:location_id ( id, name )
           )
         `, { count: 'exact' })
         .eq('user_plants.owner_id', user.id) // <— key difference
+        .is('user_plants.deceased_at', null) // Exclude deceased plants
         .order('next_run_at', { ascending: true })
         .range(0, 9999);
   
       // 1C) ID-based filter: schedules where user_plant_id IN (your plants)
+      // Note: userPlantIds already excludes deceased plants from the initial query
       const q3 = userPlantIds.length
         ? supabase
             .from('user_plant_schedules')
@@ -440,7 +612,12 @@ export default function ScheduleScreen() {
       }
   
       // Choose which dataset drives the UI (for now use the JOIN filter; flip if needed)
-      const rows = (rowsJoin ?? []) as any as ScheduleQueryRow[];
+      // Filter out any schedules for deceased plants (post-filter in case Supabase join filter doesn't work)
+      const rows = (rowsJoin ?? []).filter((row: any) => {
+        // If user_plants is an array (Supabase sometimes returns arrays for joins), check first element
+        const userPlant = Array.isArray(row.user_plants) ? row.user_plants[0] : row.user_plants;
+        return userPlant?.deceased_at === null || userPlant?.deceased_at === undefined;
+      }) as any as ScheduleQueryRow[];
   
       // ——— Deep debug metrics ———
       const summarize = (label: string, arr: ScheduleQueryRow[] | null | undefined) => {
@@ -482,30 +659,94 @@ export default function ScheduleScreen() {
       summarize('JOIN',  rowsJoin  as any);
       summarize('IN',    rowsIn    as any);
   
-      // Map rows -> UI items
-      const mapped: ScheduleItem[] = rows.map((row) => ({
-        id: row.id,
-        userPlantId: row.user_plants?.id ?? row.user_plant_id,
-        eventType: row.event_type,
-        nextRunAt: row.next_run_at,
-        plantNickname: row.user_plants?.nickname || '',
-        plantName: row.user_plants?.plants?.plant_name || 'Unknown Plant',
-        locationId: row.user_plants?.location?.id ?? null,
-        locationName: row.user_plants?.location?.name?.trim() || 'No Location',
-      }));
+      // Map rows -> UI items, filtering out water schedules for reservoir plants
+      const mapped: ScheduleItem[] = rows
+        .filter((row) => {
+          // Filter out water schedules for reservoir plants
+          const systemType = row.user_plants?.system_type;
+          if (systemType === 'reservoir' && row.event_type === 'water') {
+            return false;
+          }
+          return true;
+        })
+        .map((row) => ({
+          id: row.id,
+          userPlantId: row.user_plants?.id ?? row.user_plant_id,
+          eventType: row.event_type,
+          nextRunAt: row.next_run_at,
+          plantNickname: row.user_plants?.nickname || '',
+          plantName: row.user_plants?.plants?.plant_name || 'Unknown Plant',
+          locationId: row.user_plants?.location?.id ?? null,
+          locationName: row.user_plants?.location?.name?.trim() || 'No Location',
+          lineage: row.user_plants?.lineage || null,
+          lightType: row.user_plants?.light_type || null,
+          systemType: row.user_plants?.system_type || null,
+          waterDelay: row.user_plants?.water_delay ?? null,
+          plantsTableId: row.user_plants?.plants_table_id ?? null,
+        }));
   
-      // Build photo lookup cache meta
+      // Build photo lookup cache meta and system_type lookup
       const pk: Record<string, string | null> = {};
+      const systemTypeMap: Record<string, string | null> = {};
       for (const row of rows) {
         const upid = row.user_plants?.id ?? row.user_plant_id;
         pk[upid] = row.user_plants?.default_plant_photo_id ?? null;
+        systemTypeMap[upid] = row.user_plants?.system_type ?? null;
       }
       photoKeyByUserPlantRef.current = pk;
+      // Store system_type map for use in combined schedules
+      (photoKeyByUserPlantRef as any).systemTypeMap = systemTypeMap;
       metaReadyRef.current = true;
-  
+
       // Extra log: final UI list
       logDebug('UI mapped schedules', { count: mapped.length });
-  
+
+      // Fetch default delays for plants that don't have custom water_delay
+      const plantsNeedingDefaults = new Set<string>();
+      const plantsTableIdMap: Record<string, string> = {};
+      for (const item of mapped) {
+        if (item.waterDelay === null && item.plantsTableId) {
+          plantsNeedingDefaults.add(item.plantsTableId);
+          plantsTableIdMap[item.userPlantId] = item.plantsTableId;
+        }
+      }
+      
+      // Fetch default delays in batch
+      const defaultDelaysMap: Record<string, number | null> = {};
+      if (plantsNeedingDefaults.size > 0) {
+        const { data: plantsData } = await supabase
+          .from('plants')
+          .select('id, water_interval_days_active, water_interval_days_inactive, schedule_same_year_round, active_season_start_date, active_season_end_date')
+          .in('id', Array.from(plantsNeedingDefaults));
+        
+        if (plantsData) {
+          const now = new Date();
+          for (const plant of plantsData) {
+            let delay: number | null = null;
+            if (plant.schedule_same_year_round) {
+              delay = plant.water_interval_days_active;
+            } else {
+              const startDate = plant.active_season_start_date ? new Date(plant.active_season_start_date) : null;
+              const endDate = plant.active_season_end_date ? new Date(plant.active_season_end_date) : null;
+              
+              if (startDate && endDate) {
+                const isActive = 
+                  (startDate <= endDate && now >= startDate && now <= endDate) ||
+                  (startDate > endDate && (now >= startDate || now <= endDate));
+                delay = isActive ? plant.water_interval_days_active : plant.water_interval_days_inactive;
+              } else {
+                delay = plant.water_interval_days_active;
+              }
+            }
+            defaultDelaysMap[plant.id] = delay;
+          }
+        }
+      }
+      
+      // Store in ref for use in useMemo
+      defaultDelaysRef.current = defaultDelaysMap;
+      (defaultDelaysRef as any).plantsTableIdMap = plantsTableIdMap;
+
       setSchedules(mapped);
     } catch (err) {
       console.error('Failed to fetch schedules:', err);
@@ -688,6 +929,55 @@ export default function ScheduleScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
 
+  // Check for plant updates when screen comes into focus and rebuild if needed
+  useFocusEffect(
+    useCallback(() => {
+      if (!user?.id || !hasRebuildRun.current) {
+        // Clear selection when screen loses focus
+        return () => {
+          setSelectedCardIds({});
+        };
+      }
+
+      (async () => {
+        try {
+          const { fetchUserPlantIdsNeedingRebuild } = await import('@/services/supabaseSchedules');
+          const [waterNeedRebuild, fertNeedRebuild] = await Promise.all([
+            fetchUserPlantIdsNeedingRebuild('water'),
+            fetchUserPlantIdsNeedingRebuild('fertilize'),
+          ]);
+
+          if (waterNeedRebuild.length > 0 || fertNeedRebuild.length > 0) {
+            // Plants have been updated, rebuild schedules
+            hasRebuildRun.current = false; // Reset flag to allow rebuild
+            setRebuildModalVisible(true);
+            try {
+              await rebuild();
+              await fetchSchedules();
+            } catch (err) {
+              console.error('Rebuild failed:', err);
+              await fetchSchedules();
+            } finally {
+              setRebuildModalVisible(false);
+            }
+          } else {
+            // Just refresh the schedule list in case something changed
+            await fetchSchedules();
+          }
+        } catch (err) {
+          console.error('Error checking for plant updates:', err);
+          // Still refresh schedules even if check failed
+          await fetchSchedules();
+        }
+      })();
+
+      // Clear selection when screen loses focus
+      return () => {
+        setSelectedCardIds({});
+      };
+    }, [user?.id, rebuild, fetchSchedules])
+  );
+
   const onRefresh = useCallback(() => {
     setRefreshing(true);
     // Full reset so we re-sign everything on purpose
@@ -702,6 +992,13 @@ export default function ScheduleScreen() {
     setOpenLocations((prev) => ({
       ...prev,
       [section]: !(prev[section] ?? false),
+    }));
+  }, []);
+
+  const toggleFutureSection = useCallback((sectionId: string) => {
+    setOpenFutureSections((prev) => ({
+      ...prev,
+      [sectionId]: !(prev[sectionId] ?? false),
     }));
   }, []);
 
@@ -871,12 +1168,21 @@ export default function ScheduleScreen() {
     setDelayDays((prev) => Math.max(prev - 1, 0));
   }, []);
 
-  const handleCompletePress = useCallback((schedule: ScheduleItem) => {
+  const handleCompletePress = useCallback((schedule: ScheduleItem, isWatering?: boolean, systemType?: 'normal' | 'reservoir' | null) => {
+    // For reservoir plants with fertilize events, use CareModal instead
+    if (schedule.eventType === 'fertilize' && systemType === 'reservoir') {
+      setSelectedUserPlantIds([schedule.userPlantId]);
+      setCareModalOpen(true);
+      setExpandedCardId(null);
+      return;
+    }
+
     setSelectedUserPlantIds([schedule.userPlantId]);
     setSelectedEventType(schedule.eventType as 'water' | 'fertilize');
     if (schedule.eventType === 'water') {
       setWaterModalOpen(true);
     } else if (schedule.eventType === 'fertilize') {
+      setFertilizeModalIsWatering(isWatering ?? false);
       setFertilizeModalOpen(true);
     }
     setExpandedCardId(null); // Close the expanded card
@@ -1100,6 +1406,12 @@ export default function ScheduleScreen() {
         isOpen: boolean;
       }
     | {
+        kind: 'future-section';
+        id: string;
+        locationId: string;
+        isOpen: boolean;
+      }
+    | {
         kind: 'combined-item';
         id: string;
         combined: CombinedSchedule;
@@ -1151,8 +1463,14 @@ export default function ScheduleScreen() {
             plantName: schedule.plantName,
             locationId: schedule.locationId,
             locationName: schedule.locationName,
+            lineage: schedule.lineage,
+            lightType: schedule.lightType,
+            systemType: schedule.systemType,
             schedules: {},
             earliestNextRunAt: Number.POSITIVE_INFINITY,
+            waterDelay: schedule.waterDelay ?? null,
+            plantsTableId: schedule.plantsTableId ?? null,
+            isDefaultDelay: schedule.waterDelay === null || schedule.waterDelay === undefined,
           };
           bucket.items.set(plantId, created);
           return created;
@@ -1163,15 +1481,55 @@ export default function ScheduleScreen() {
       if (Number.isFinite(ts) && ts < combined.earliestNextRunAt) {
         combined.earliestNextRunAt = ts;
       }
+    }
 
-      if (isDueToday(schedule.nextRunAt)) {
-        bucket.todayCount += 1;
+    // After processing all schedules, count today's events
+    // For clustered events (water + fertilize on same day), count as 1
+    for (const [key, bucket] of buckets.entries()) {
+      for (const [plantId, combined] of bucket.items.entries()) {
+        const waterSchedule = combined.schedules['water'];
+        const fertSchedule = combined.schedules['fertilize'];
+        const isReservoir = combined.systemType === 'reservoir';
+
+        // Check if water and fertilize are on the same day (clustered)
+        let isClustered = false;
+        if (waterSchedule && fertSchedule && !isReservoir) {
+          const waterDate = new Date(waterSchedule.nextRunAt);
+          const fertDate = new Date(fertSchedule.nextRunAt);
+          waterDate.setHours(0, 0, 0, 0);
+          fertDate.setHours(0, 0, 0, 0);
+          isClustered = waterDate.getTime() === fertDate.getTime();
+        }
+
+        if (isClustered && waterSchedule) {
+          // Clustered event: count once if either is due today
+          if (isDueToday(waterSchedule.nextRunAt)) {
+            bucket.todayCount += 1;
+          }
+        } else {
+          // Non-clustered: count each event separately
+          if (waterSchedule && isDueToday(waterSchedule.nextRunAt)) {
+            bucket.todayCount += 1;
+          }
+          if (fertSchedule && isDueToday(fertSchedule.nextRunAt)) {
+            bucket.todayCount += 1;
+          }
+        }
       }
     }
 
-    const sortedBuckets = Array.from(buckets.entries()).sort((a, b) =>
-      a[1].label.localeCompare(b[1].label, undefined, { sensitivity: 'base' })
-    );
+    // Sort sections: ones with active tasks first (alphabetically), then ones without (alphabetically)
+    const sortedBuckets = Array.from(buckets.entries()).sort((a, b) => {
+      const aHasActive = a[1].todayCount > 0;
+      const bHasActive = b[1].todayCount > 0;
+      
+      // If one has active tasks and the other doesn't, prioritize the one with active tasks
+      if (aHasActive && !bHasActive) return -1;
+      if (!aHasActive && bHasActive) return 1;
+      
+      // Otherwise, sort alphabetically
+      return a[1].label.localeCompare(b[1].label, undefined, { sensitivity: 'base' });
+    });
 
     const out: Row[] = [];
     for (const [key, bucket] of sortedBuckets) {
@@ -1190,8 +1548,67 @@ export default function ScheduleScreen() {
         compareCombinedSchedules
       );
 
+      // Get default delays from ref (fetched in fetchSchedules)
+      const defaultDelaysMap = defaultDelaysRef.current || {};
+      const plantsTableIdMap = (defaultDelaysRef as any).plantsTableIdMap || {};
+
+      // Separate plants into today and future
+      const todayItems: Array<{ combined: CombinedSchedule; eventSummaries: EventSummary[] }> = [];
+      const futureItems: Array<{ combined: CombinedSchedule; eventSummaries: EventSummary[] }> = [];
+
       combinedList.forEach((combined) => {
-        const eventSummaries: EventSummary[] = eventConfig.map(({ type, label }) => {
+        // Get system_type for this plant to filter water schedules for reservoir plants
+        const systemTypeMap = (photoKeyByUserPlantRef as any).systemTypeMap || {};
+        const systemType = systemTypeMap[combined.userPlantId];
+        
+        // Set default delay if needed
+        if (combined.waterDelay === null && combined.plantsTableId) {
+          const defaultDelay = defaultDelaysMap[combined.plantsTableId];
+          if (defaultDelay !== undefined) {
+            combined.waterDelay = defaultDelay;
+            combined.isDefaultDelay = true;
+          }
+        }
+        
+        // First, get all schedules and check if water and fertilize are on the same day
+        const waterSchedule = combined.schedules['water'];
+        const fertSchedule = combined.schedules['fertilize'];
+        
+        // Check if they're on the same day (for clustering)
+        let areOnSameDay = false;
+        if (waterSchedule && fertSchedule && systemType !== 'reservoir') {
+          const waterDate = new Date(waterSchedule.nextRunAt);
+          const fertDate = new Date(fertSchedule.nextRunAt);
+          // Check if same day (ignoring time)
+          waterDate.setHours(0, 0, 0, 0);
+          fertDate.setHours(0, 0, 0, 0);
+          areOnSameDay = waterDate.getTime() === fertDate.getTime();
+        }
+
+        // Check if the next watering will also be a fertilizing (for clustering rule 4)
+        // This means: if water and fertilize are on the same day, and the next water after that
+        // will also have fertilize on the same day, we can cluster
+        let shouldCluster = false;
+        if (areOnSameDay && waterSchedule && fertSchedule && systemType !== 'reservoir') {
+          // For now, if they're on the same day, we cluster them
+          // Rule 4: "only if the next watering will also be a fertilizing"
+          // We'll cluster if they're on the same day - the user can adjust if needed
+          shouldCluster = true;
+        }
+
+        const eventSummaries: EventSummary[] = eventConfig
+          .filter(({ type }) => {
+            // Filter out water schedules for reservoir plants
+            if (type === 'water' && systemType === 'reservoir') {
+              return false;
+            }
+            // If we're clustering, skip individual water/fertilize and add combined
+            if (shouldCluster && (type === 'water' || type === 'fertilize')) {
+              return false;
+            }
+            return true;
+          })
+          .map(({ type, label }) => {
           const schedule = combined.schedules[type];
 
           if (!schedule) {
@@ -1255,6 +1672,63 @@ export default function ScheduleScreen() {
           };
         });
 
+        // If we should cluster, add a combined event
+        if (shouldCluster && waterSchedule && fertSchedule) {
+          const dueToday = isDueToday(waterSchedule.nextRunAt);
+          const dueTomorrow = isDueTomorrow(waterSchedule.nextRunAt);
+          const relativeText = getRelativeDueText(waterSchedule.nextRunAt);
+
+          const backgroundColor = dueToday
+            ? '#047857'
+            : dueTomorrow
+            ? '#92400E'
+            : '#374151';
+
+          const textColor = '#F9FAFB';
+
+          const pillBackground = dueToday
+            ? 'rgba(6, 95, 70, 0.18)'
+            : dueTomorrow
+            ? 'rgba(180, 83, 9, 0.18)'
+            : 'rgba(79, 70, 229, 0.12)';
+
+          const pillBorderColor = dueToday
+            ? '#047857'
+            : dueTomorrow
+            ? '#B45309'
+            : '#4B5563';
+
+          const pillTextColor = '#F9FAFB';
+
+          // Use the water schedule as the primary schedule for the combined event
+          eventSummaries.unshift({
+            eventType: 'water_fertilize',
+            label: 'F & W', // Button label is shortened
+            dateText: relativeText,
+            isToday: dueToday,
+            isTomorrow: dueTomorrow,
+            backgroundColor,
+            textColor,
+            pillBackground,
+            pillBorderColor,
+            pillTextColor,
+            combinedText: `Fertilize & Water ${relativeText}`, // Chip text is full
+            schedule: waterSchedule, // Use water schedule as primary
+          });
+        }
+
+        // Check if this plant has any items due today
+        const hasItemsDueToday = eventSummaries.some(summary => summary.isToday);
+        
+        if (hasItemsDueToday) {
+          todayItems.push({ combined, eventSummaries });
+        } else {
+          futureItems.push({ combined, eventSummaries });
+        }
+      });
+
+      // Add today items first
+      todayItems.forEach(({ combined, eventSummaries }) => {
         out.push({
           kind: 'combined-item',
           id: combined.userPlantId,
@@ -1262,12 +1736,51 @@ export default function ScheduleScreen() {
           eventSummaries,
         });
       });
+
+      // Add Future section only if there are BOTH today items AND future items
+      // If there are only future items (no today items), show them directly without a Future section
+      if (futureItems.length > 0) {
+        if (todayItems.length > 0) {
+          // Both today and future items exist - add Future section
+          const futureSectionId = `${key}-future`;
+          const isFutureOpen = openFutureSections[futureSectionId] ?? false;
+          out.push({
+            kind: 'future-section',
+            id: futureSectionId,
+            locationId: key,
+            isOpen: isFutureOpen,
+          });
+
+          // Add future items if section is open
+          if (isFutureOpen) {
+            futureItems.forEach(({ combined, eventSummaries }) => {
+              out.push({
+                kind: 'combined-item',
+                id: combined.userPlantId,
+                combined,
+                eventSummaries,
+              });
+            });
+          }
+        } else {
+          // Only future items - show them directly without a Future section
+          futureItems.forEach(({ combined, eventSummaries }) => {
+            out.push({
+              kind: 'combined-item',
+              id: combined.userPlantId,
+              combined,
+              eventSummaries,
+            });
+          });
+        }
+      }
     }
 
     return out;
   }, [
     schedules,
     openLocations,
+    openFutureSections,
     isDueToday,
     isDueTomorrow,
     compareCombinedSchedules,
@@ -1344,33 +1857,71 @@ export default function ScheduleScreen() {
           <View style={[styles.content, selectionMode && { paddingTop: 8 }]}>
             {rows.map((item) => {
               if (item.kind === 'section') {
+                const hasUrgentItems = item.todayCount > 0;
                 return (
-                  <Pressable
-                    key={item.id}
-                    style={[styles.sectionHeader, { backgroundColor: theme.colors.card, borderColor: theme.colors.border }]}
-                    onPress={() => toggleLocation(item.id)}
-                  >
-                    <View style={styles.sectionHeaderContent}>
-                      <View style={styles.sectionHeaderLeft}>
-                        <IconSymbol
-                          name="location"
-                          size={24}
-                          color={theme.colors.text}
-                        />
-                        <ThemedText style={styles.sectionTitle}>{item.label}</ThemedText>
-                        {item.todayCount > 0 && (
-                          <View style={[styles.countBadge, { backgroundColor: '#10B981' }]}>
-                            <ThemedText style={styles.countBadgeText}>{item.todayCount}</ThemedText>
+                  <View key={item.id} style={styles.sectionWrapper}>
+                    <Pressable
+                      style={[
+                        styles.sectionHeader,
+                        { 
+                          backgroundColor: theme.colors.card,
+                          borderColor: hasUrgentItems ? '#10B981' : theme.colors.border,
+                        }
+                      ]}
+                      onPress={() => toggleLocation(item.id)}
+                      android_ripple={{ color: theme.colors.primary + '20' }}
+                    >
+                      <View style={styles.sectionHeaderContent}>
+                        <View style={styles.sectionHeaderLeft}>
+                          {/* Location icon with subtle background */}
+                          <View style={[
+                            styles.sectionIconContainer,
+                            { backgroundColor: theme.colors.primary + '15' }
+                          ]}>
+                            <IconSymbol
+                              name="location"
+                              size={18}
+                              color={hasUrgentItems ? '#10B981' : theme.colors.primary}
+                            />
                           </View>
-                        )}
+                          
+                          {/* Section title with better typography */}
+                          <View style={styles.sectionTitleContainer}>
+                            <ThemedText style={[
+                              styles.sectionTitle,
+                              hasUrgentItems && styles.sectionTitleUrgent
+                            ]}>
+                              {item.label}
+                            </ThemedText>
+                            {item.todayCount > 0 && (
+                              <View style={styles.urgentIndicator}>
+                                <ThemedText style={styles.urgentIndicatorText}>
+                                  {item.todayCount} {item.todayCount === 1 ? 'task' : 'tasks'} due today
+                                </ThemedText>
+                              </View>
+                            )}
+                          </View>
+                        </View>
+                        
+                        {/* Enhanced chevron with better visual feedback */}
+                        <View style={[
+                          styles.sectionChevronContainer,
+                          item.isOpen && styles.sectionChevronContainerOpen
+                        ]}>
+                          <IconSymbol
+                            name={item.isOpen ? 'chevron.up' : 'chevron.down'}
+                            size={18}
+                            color={hasUrgentItems ? '#10B981' : theme.colors.mutedText}
+                          />
+                        </View>
                       </View>
-                      <IconSymbol
-                        name={item.isOpen ? 'chevron.up' : 'chevron.down'}
-                        size={20}
-                        color={theme.colors.text}
-                      />
-                    </View>
-                  </Pressable>
+                    </Pressable>
+                    
+                    {/* Subtle divider line when open */}
+                    {item.isOpen && (
+                      <View style={[styles.sectionDivider, { backgroundColor: theme.colors.border }]} />
+                    )}
+                  </View>
                 );
               }
 
@@ -1379,6 +1930,23 @@ export default function ScheduleScreen() {
                   <ThemedText key={item.id} style={styles.emptyText}>
                     {item.message}
                   </ThemedText>
+                );
+              }
+
+              if (item.kind === 'future-section') {
+                return (
+                  <Pressable
+                    key={item.id}
+                    style={styles.futureSectionHeader}
+                    onPress={() => toggleFutureSection(item.id)}
+                  >
+                    <ThemedText style={styles.futureSectionHeaderText}>Future</ThemedText>
+                    <IconSymbol
+                      name={item.isOpen ? 'chevron.up' : 'chevron.right'}
+                      size={16}
+                      color={theme.colors.mutedText}
+                    />
+                  </Pressable>
                 );
               }
 
@@ -1397,6 +1965,7 @@ export default function ScheduleScreen() {
                     borderColor={theme.colors.border as string}
                     textColor={theme.colors.text}
                     isExpanded={expandedCardId === cardId}
+                    combined={combined}
                     isSelected={isSelected}
                     onPress={() => handleCardPress(cardId)}
                     onLongPress={() => handleCardLongPress(cardId)}
@@ -1404,6 +1973,9 @@ export default function ScheduleScreen() {
                     onDelayPressPlant={() => handleDelayPressPlant(combined)}
                     eventSummaries={item.eventSummaries}
                     onCarePress={handleCompletePress}
+                    lineage={combined.lineage}
+                    lightType={combined.lightType}
+                    systemType={combined.systemType}
                   />
                 );
               }
@@ -1565,6 +2137,18 @@ export default function ScheduleScreen() {
         open={fertilizeModalOpen}
         onClose={() => {
           setFertilizeModalOpen(false);
+          setFertilizeModalIsWatering(false);
+        }}
+        userPlantIds={selectedUserPlantIds}
+        defaultIsWatering={fertilizeModalIsWatering}
+        onSaved={handleModalSaved}
+      />
+
+      {/* Care Modal */}
+      <CareModal
+        open={careModalOpen}
+        onClose={() => {
+          setCareModalOpen(false);
         }}
         userPlantIds={selectedUserPlantIds}
         onSaved={handleModalSaved}
@@ -1578,12 +2162,18 @@ const styles = StyleSheet.create({
   headerImage: { width: '100%', height: '100%' },
   content: { paddingTop: 8 },
   loadingContainer: { paddingVertical: 40, alignItems: 'center' },
+  sectionWrapper: {
+    marginTop: 8,
+  },
   sectionHeader: {
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 12,
-    marginVertical: 8,
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderBottomWidth: StyleSheet.hairlineWidth,
     borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 12,
+    marginHorizontal: 16,
+    marginBottom: 4,
   },
   sectionHeaderContent: {
     flexDirection: 'row',
@@ -1593,12 +2183,66 @@ const styles = StyleSheet.create({
   sectionHeaderLeft: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: 12,
     flex: 1,
   },
+  sectionIconContainer: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  sectionTitleContainer: {
+    flex: 1,
+    gap: 4,
+  },
   sectionTitle: { 
-    fontSize: 20, 
+    fontSize: 17,
     fontWeight: '700',
+    letterSpacing: -0.2,
+  },
+  sectionTitleUrgent: {
+    color: '#10B981',
+  },
+  urgentIndicator: {
+    marginTop: 2,
+  },
+  urgentIndicatorText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#10B981',
+    opacity: 0.9,
+  },
+  sectionChevronContainer: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'transparent',
+  },
+  sectionChevronContainerOpen: {
+    backgroundColor: 'rgba(0,0,0,0.05)',
+  },
+  sectionDivider: {
+    height: StyleSheet.hairlineWidth,
+    marginHorizontal: 16,
+    marginBottom: 4,
+  },
+  futureSectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    marginHorizontal: 16,
+    marginBottom: 4,
+  },
+  futureSectionHeaderText: {
+    fontSize: 15,
+    fontWeight: '600',
+    opacity: 0.8,
   },
   subsectionTitle: {
     fontSize: 20,
@@ -1627,6 +2271,7 @@ const styles = StyleSheet.create({
   },
   cardWrapper: {
     marginBottom: 8,
+    marginHorizontal: 16,
     borderWidth: StyleSheet.hairlineWidth,
     overflow: 'hidden',
   },
@@ -1657,8 +2302,8 @@ const styles = StyleSheet.create({
     opacity: 0.8,
   },
   imageContainer: {
-    width: 60,
-    height: 60,
+    width: 65,
+    height: 65,
     borderRadius: 8,
     overflow: 'hidden',
     position: 'relative',
@@ -1738,6 +2383,31 @@ const styles = StyleSheet.create({
     marginBottom: 0,
   },
   plantName: { fontSize: 16, fontWeight: '700', flex: 1 },
+  delayIndicator: {
+    marginTop: 8,
+    marginBottom: 4,
+  },
+  delayBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+    alignSelf: 'flex-start',
+  },
+  delayText: {
+    fontSize: 13,
+    fontWeight: '700',
+    letterSpacing: -0.1,
+  },
+  delayLabel: {
+    fontSize: 8,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
   eventChip: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1756,13 +2426,44 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   eventSummaryList: {
-    marginTop: 6,
+    marginTop: 8,
+    gap: 6,
   },
   eventSummaryRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 2,
     gap: 8,
+  },
+  urgencyDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    flexShrink: 0,
+  },
+  eventIconContainer: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  eventTextContainer: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: 6,
+  },
+  eventLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  eventLabelBold: {
+    fontWeight: '700',
+  },
+  eventDate: {
+    fontSize: 12,
+    fontWeight: '500',
   },
   duePill: {
     paddingHorizontal: 10,

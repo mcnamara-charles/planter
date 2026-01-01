@@ -82,10 +82,26 @@ const MAPPING: Record<string, IconDescriptor> = {
   // ---- Light source icons ----
   'light.grow': { lib: 'material', name: 'lightbulb' }, // grow light bulb
   'light.sun': { lib: 'material', name: 'wb-sunny' }, // sunlight/sun
+  'sun.max': { lib: 'material', name: 'wb-sunny' }, // sun icon (alias for light.sun)
+
+  // ---- Selection toolbar icons ----
+  tag: { lib: 'material', name: 'local-offer' }, // tag/label icon
+  'arrow.right': { lib: 'material', name: 'arrow-forward' }, // right arrow
 
   // ---- Entypo addition ----
   // Use this from your app as <IconSymbol name="cycle" />
   cycle: { lib: 'entypo', name: 'cycle' },
+  
+  // ---- Explore icon ----
+  safari: { lib: 'material', name: 'explore' }, // explore/globe icon
+  
+  // ---- Seasonal/Year-round icons ----
+  flower: { lib: 'material', name: 'local-florist' }, // flower icon for seasonal plants
+  plant: { lib: 'material', name: 'spa' }, // plant icon for year-round plants
+  
+  // ---- Timeline view icons ----
+  calendar: { lib: 'material', name: 'calendar-today' }, // calendar icon
+  timeline: { lib: 'material', name: 'timeline' }, // timeline icon
 };
 
 // Drive the public prop name from the keys of our mapping

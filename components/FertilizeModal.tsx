@@ -12,11 +12,13 @@ export default function FertilizeModal({
   onClose,
   userPlantIds,
   onSaved,
+  defaultIsWatering = false,
 }: {
   open: boolean;
   onClose: () => void;
   userPlantIds: string[];
   onSaved?: () => void;
+  defaultIsWatering?: boolean;
 }) {
   const { theme } = useTheme();
   const { user } = useAuth();
@@ -69,8 +71,11 @@ export default function FertilizeModal({
       setMethod('');
       setConcentration('');
       setIsWatering(false);
+    } else {
+      // Set default isWatering when modal opens
+      setIsWatering(defaultIsWatering);
     }
-  }, [open]);
+  }, [open, defaultIsWatering]);
 
   if (!open) return null;
   if (!plantIds.length) return null;

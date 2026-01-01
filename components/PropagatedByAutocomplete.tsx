@@ -15,12 +15,16 @@ import { useTheme } from '@/context/themeContext';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { supabase } from '@/services/supabaseClient';
 import { useAuth } from '@/context/AuthContext';
+import LineageIndicator from './LineageIndicator';
 
 export type PropagatedByResult = {
   id: string;             // user_plants.id
   nickname: string;
   common: string;
   scientific?: string | null;
+  lineage?: string | null;
+  lightType?: 'grow_light' | 'sunlight' | null;
+  systemType?: 'normal' | 'reservoir' | null;
 };
 
 type Props = {
@@ -215,6 +219,9 @@ export function PropagatedByAutocomplete(props: Props) {
           id,
           nickname,
           custom_species_name,
+          lineage,
+          light_type,
+          system_type,
           plants:plants_table_id (
             plant_name,
             plant_scientific_name
@@ -248,6 +255,9 @@ export function PropagatedByAutocomplete(props: Props) {
         nickname: row.nickname || '',
         common: row.plants?.plant_name ?? row.custom_species_name ?? '',
         scientific: row.plants?.plant_scientific_name ?? null,
+        lineage: row.lineage || null,
+        lightType: row.light_type || null,
+        systemType: row.system_type || null,
       }));
   
       state.cache.set(key, items);
@@ -339,9 +349,14 @@ export function PropagatedByAutocomplete(props: Props) {
 
             {/* Text block: nickname → common → scientific */}
             <View style={styles.cardText}>
-              <ThemedText style={styles.cardTitle} numberOfLines={1}>
-                {picked.nickname?.trim() || picked.common || 'Selected plant'}
-              </ThemedText>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                {(picked.lineage || picked.lightType === 'grow_light' || picked.systemType === 'reservoir') && (
+                  <LineageIndicator lineage={picked.lineage} lightType={picked.lightType} systemType={picked.systemType} textSize={10} iconSize={10} />
+                )}
+                <ThemedText style={styles.cardTitle} numberOfLines={1}>
+                  {picked.nickname?.trim() || picked.common || 'Selected plant'}
+                </ThemedText>
+              </View>
 
               {!!picked.common && picked.nickname &&
                 picked.common.trim().toLowerCase() !== picked.nickname.trim().toLowerCase() && (
@@ -427,9 +442,14 @@ export function PropagatedByAutocomplete(props: Props) {
             {results.map((item) => (
               <TouchableOpacity key={item.id} style={styles.row} onPress={() => handlePick(item)}>
                 <View style={{ flex: 1 }}>
-                  <ThemedText style={styles.rowPrimary}>
-                    {item.nickname || item.common || 'Unknown'}
-                  </ThemedText>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    {(item.lineage || item.lightType === 'grow_light' || item.systemType === 'reservoir') && (
+                      <LineageIndicator lineage={item.lineage} lightType={item.lightType} systemType={item.systemType} textSize={10} iconSize={10} />
+                    )}
+                    <ThemedText style={styles.rowPrimary}>
+                      {item.nickname || item.common || 'Unknown'}
+                    </ThemedText>
+                  </View>
                   {!!item.common && item.common !== item.nickname && (
                     <ThemedText style={styles.rowSecondary}>{item.common}</ThemedText>
                   )}

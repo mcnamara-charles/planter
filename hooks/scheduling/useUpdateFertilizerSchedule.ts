@@ -60,13 +60,22 @@ type IntervalPick = (args: {
   water_interval_days_inactive: number | null;
   fert_interval_days_active: number | null;
   fert_interval_days_inactive: number | null;
+  water_delay: number | null;
 }) => number | null;
 
 const pickWaterInterval: IntervalPick = ({
   activeNow,
   water_interval_days_active,
   water_interval_days_inactive,
-}) => (activeNow ? water_interval_days_active ?? null : water_interval_days_inactive ?? null);
+  water_delay,
+}) => {
+  // If water_delay is set in user_plants, use that instead of the default intervals
+  if (water_delay !== null && water_delay !== undefined) {
+    return water_delay;
+  }
+  // Otherwise, use the default active/inactive intervals
+  return activeNow ? water_interval_days_active ?? null : water_interval_days_inactive ?? null;
+};
 
 const pickFertInterval: IntervalPick = ({
   activeNow,
@@ -101,6 +110,7 @@ function makeUseUpdateSchedule(eventType: ScheduleEventType, pickInterval: Inter
           water_interval_days_inactive: sched.water_interval_days_inactive ?? null,
           fert_interval_days_active: sched.fert_interval_days_active ?? null,
           fert_interval_days_inactive: sched.fert_interval_days_inactive ?? null,
+          water_delay: sched.water_delay ?? null,
         });
 
         // If nothing configured, skip safely

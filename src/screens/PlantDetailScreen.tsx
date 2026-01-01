@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Modal, Pressable, StyleSheet, View, BackHandler, Platform } from 'react-native';
+import { ActivityIndicator, Alert, Modal, Pressable, StyleSheet, TouchableOpacity, View, BackHandler, Platform } from 'react-native';
 import { Image } from 'expo-image';
 import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
 import ParallaxScrollView from '@/components/parallax-scroll-view';
@@ -9,7 +9,8 @@ import { useTheme } from '@/context/themeContext';
 import { useAuth } from '@/context/AuthContext';
 import { supabase } from '@/services/supabaseClient';
 import SkeletonTile from '@/components/SkeletonTile';
-import PlantTimeline from '@/components/PlantTimeline';
+import TimelineChart from '@/components/TimelineChart';
+import TimelineCalendar from '@/components/TimelineCalendar';
 import WaterModal from '@/components/WaterModal';
 import FertilizeModal from '@/components/FertilizeModal';
 import PruneModal from '@/components/PruneModal';
@@ -25,12 +26,14 @@ import CompactStatus from '@/components/CompactStatus';
 import EnvironmentSection from '@/components/EnvironmentSection';
 import CareSection from '@/components/CareSection';
 import SoilMixViz from '@/components/SoilMixViz';
-import LocationModal from '@/components/LocationModal';
+import MoveModal from '@/components/MoveModal';
 import SoilModal from '@/components/SoilModal';
 import PotDetailsModal from '@/components/PotDetailsModal';
+import TaxonomyModal from '@/components/TaxonomyModal';
 import { ButtonPill } from '@/components/Buttons';
 import PlantDataGenerationModal from '@/components/PlantDataGenerationModal';
 
+import { IconSymbol } from '@/components/ui/icon-symbol';
 import { labelAvailability, labelRarity } from '@/utils/labels';
 import type { Availability, Rarity, RouteParams, SoilRowDraft, PotShape } from '@/utils/types';
 
@@ -81,7 +84,12 @@ export default function PlantDetailScreen() {
     rarity: '' as Rarity,
     isFavorite: false,
     location: '',
+    locationId: null as string | null,
     plantsTableId: null as string | null,
+    speciesTaxonId: null as string | null,
+    lineage: null as string | null,
+    lightType: null as 'grow_light' | 'sunlight' | null,
+    systemType: null as 'normal' | 'reservoir' | null,
     pot: { type: '', heightIn: null as number | null, diameterIn: null as number | null, drainage: '' } as PotShape,
     soilMix: null as Record<string, number> | null,
     soilDescription: null as string | null,
@@ -94,16 +102,21 @@ export default function PlantDetailScreen() {
     fertilize: false,
     prune: false,
     location: false,
+    taxonomy: false,
     soil: false,
     pot: false as boolean,
     potMode: 'add' as 'add' | 'repot',
     confirmName: { open: false, suggested: null as string | null },
   });
-  const [drafts, setDrafts] = useState({ location: '', soilRows: [] as SoilRowDraft[], potNote: '' });
+  const [drafts, setDrafts] = useState({ soilRows: [] as SoilRowDraft[], potNote: '' });
   const [potDraft, setPotDraft] = useState({ potType: '', drainageSystem: '', potHeightIn: '', potDiameterIn: '' });
 
   const [openSection, setOpenSection] = useState<'care' | 'timeline' | 'environment' | 'propagation' | 'photos' | null>('care');
   const toggle = (key: NonNullable<typeof openSection>) => setOpenSection((curr) => (curr === key ? null : key));
+
+  // Timeline controls state
+  const [timelineEventType, setTimelineEventType] = useState<'Water' | 'Fertilize'>('Water');
+  const [timelineEventTypeOpen, setTimelineEventTypeOpen] = useState(false);
 
   // Debounce ref for favorite
   const favTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -212,7 +225,7 @@ export default function PlantDetailScreen() {
       const { data: up, error: upErr } = await supabase
         .from('user_plants')
         .select(
-          'id, nickname, plants_table_id, default_plant_photo_id, favorite, location_id, pot_type, pot_height_in, pot_diameter_in, drainage_system, soil_mix, location:location_id (id, name)'
+          'id, nickname, plants_table_id, default_plant_photo_id, favorite, location_id, pot_type, pot_height_in, pot_diameter_in, drainage_system, soil_mix, lineage, light_type, system_type, location:location_id (id, name)'
         )
         .eq('id', id)
         .maybeSingle();
@@ -245,10 +258,11 @@ export default function PlantDetailScreen() {
       let rarity: Rarity = '' as Rarity;
 
       let plantRow: any = null;
+      let speciesTaxonId: string | null = null;
       if (up.plants_table_id) {
         const { data } = await supabase
           .from('plants')
-          .select('plant_name, plant_scientific_name, description, availability, rarity, propagation_methods_json, soil_description')
+          .select('plant_name, plant_scientific_name, description, availability, rarity, propagation_methods_json, soil_description, species_taxon_id')
           .eq('id', up.plants_table_id)
           .maybeSingle();
         plantRow = data;
@@ -258,6 +272,7 @@ export default function PlantDetailScreen() {
         description = plantRow?.description || '';
         availability = (plantRow?.availability as any) || '';
         rarity = (plantRow?.rarity as any) || '';
+        speciesTaxonId = plantRow?.species_taxon_id || null;
       }
 
       // IMPORTANT: merge DB with existing (optimistic) state so optimistic wins
@@ -267,12 +282,17 @@ export default function PlantDetailScreen() {
         displayName: nickname || prev.displayName || 'My Plant',
         commonName: commonName || prev.commonName || '',
         scientific: scientific || prev.scientific,
+        speciesTaxonId: speciesTaxonId !== null ? speciesTaxonId : prev.speciesTaxonId,
         description: description || prev.description,
         availability: (availability as Availability) || prev.availability,
         rarity: (rarity as Rarity) || prev.rarity,
         isFavorite: !!up.favorite,
         location: (up.location as any)?.name ?? prev.location,
+        locationId: (up.location as any)?.id ?? prev.locationId,
         plantsTableId: up.plants_table_id ?? prev.plantsTableId,
+        lineage: (up as any).lineage ?? prev.lineage,
+        lightType: (up as any).light_type ?? prev.lightType,
+        systemType: (up as any).system_type ?? prev.systemType,
         pot: {
           type: up.pot_type ?? prev.pot.type,
           heightIn:
@@ -407,55 +427,10 @@ export default function PlantDetailScreen() {
     }, 500);
   }, [plant.isFavorite, id]);
 
-  const saveLocation = useCallback(async () => {
-    const prev = plant.location || '';
-    const next = drafts.location.trim();
-    if (next === prev) { setModals((m) => ({ ...m, location: false })); return; }
-    try {
-      let locationId = null;
-      
-      // If user entered a location name, find or create the location
-      if (next) {
-        // First, check if location already exists
-        const { data: existingLocation } = await supabase
-          .from('locations')
-          .select('id')
-          .eq('name', next)
-          .eq('owner_id', user?.id)
-          .maybeSingle();
-        
-        if (existingLocation) {
-          locationId = existingLocation.id;
-        } else {
-          // Create new location
-          const { data: newLocation, error: createErr } = await supabase
-            .from('locations')
-            .insert({ name: next, owner_id: user?.id })
-            .select('id')
-            .single();
-          
-          if (createErr) throw createErr;
-          locationId = newLocation.id;
-        }
-      }
-      
-      // Update the user_plants record with the location_id
-      const { error: updErr } = await supabase
-        .from('user_plants')
-        .update({ location_id: locationId })
-        .eq('id', id);
-      
-      if (updErr) throw updErr;
-      setPlant((p) => ({ ...p, location: next }));
-      setModals((m) => ({ ...m, location: false }));
-      
-      if (user?.id && prev) {
-        await supabase.from('user_plant_timeline_events').insert({
-          owner_id: user.id, user_plant_id: id, event_type: 'move', event_data: { from: prev || null, to: next || null }, note: null,
-        });
-      }
-    } catch {}
-  }, [drafts.location, plant.location, id, user?.id]);
+  const handleMoveSaved = useCallback(() => {
+    setUi((u) => ({ ...u, timelineKey: u.timelineKey + 1 }));
+    fetchDetails(true);
+  }, [fetchDetails]);
 
   const saveSoil = useCallback(async () => {
     const obj: Record<string, number> = {};
@@ -540,6 +515,9 @@ export default function PlantDetailScreen() {
         onToggleFavorite={toggleFavorite}
         onToggleMenu={() => setUi((u) => ({ ...u, menuOpen: !u.menuOpen }))}
         showUpdateButton={userDeclinedUpdate && validationResult.needsGeneration}
+        lineage={plant.lineage}
+        lightType={plant.lightType}
+        systemType={plant.systemType}
         onUpdate={() => {
           setUserDeclinedUpdate(false);
           // Re-trigger validation to show the modal
@@ -554,6 +532,41 @@ export default function PlantDetailScreen() {
           onEdit={() => {
             setUi((u) => ({ ...u, menuOpen: false }));
             (nav as any).navigate('AddPlant', { userPlantId: id });
+          }}
+          onSetDeceased={async () => {
+            setUi((u) => ({ ...u, menuOpen: false }));
+            Alert.alert('Set Deceased', 'Mark this plant as deceased? This will remove all future schedule events.', [
+              { text: 'Cancel', style: 'cancel' },
+              {
+                text: 'Set Deceased',
+                style: 'default',
+                onPress: async () => {
+                  try {
+                    const now = new Date();
+                    // Update deceased_at column
+                    const { error: updateErr } = await supabase
+                      .from('user_plants')
+                      .update({ deceased_at: now.toISOString() })
+                      .eq('id', id);
+                    if (updateErr) throw updateErr;
+
+                    // Delete all future schedule events
+                    const { error: deleteSchedulesErr } = await supabase
+                      .from('user_plant_schedules')
+                      .delete()
+                      .eq('user_plant_id', id)
+                      .gte('next_run_at', now.toISOString());
+                    if (deleteSchedulesErr) throw deleteSchedulesErr;
+
+                    Alert.alert('Success', 'Plant marked as deceased and future schedules removed.');
+                    // Navigate back to My Plants
+                    (nav as any).navigate('MainTabs', { screen: 'MyPlants' });
+                  } catch (e: any) {
+                    Alert.alert('Error', e?.message ?? 'Failed to set plant as deceased');
+                  }
+                },
+              },
+            ]);
           }}
           onDelete={() => {
             setUi((u) => ({ ...u, menuOpen: false }));
@@ -613,7 +626,24 @@ export default function PlantDetailScreen() {
               {/* Common name under header (nickname remains in TopBar) */}
               <ThemedText type="title">{plant.commonName || plant.displayName}</ThemedText>
               {!!plant.scientific && (
-                <ThemedText style={{ opacity: 0.7, fontStyle: 'italic' }}>{plant.scientific}</ThemedText>
+                <Pressable
+                  onPress={() => {
+                    if (plant.speciesTaxonId) {
+                      setModals((m) => ({ ...m, taxonomy: true }));
+                    }
+                  }}
+                  style={{ paddingRight: 20, width: '100%' }}
+                >
+                  <ThemedText 
+                    style={{ 
+                      opacity: 0.7, 
+                      fontStyle: 'italic',
+                      flexShrink: 1
+                    }}
+                  >
+                    {plant.scientific}
+                  </ThemedText>
+                </Pressable>
               )}
               <CompactStatus rarity={availabilityLabel ? rarityLabel : ''} availability={availabilityLabel} />
 
@@ -640,8 +670,80 @@ export default function PlantDetailScreen() {
                 />
               </Section>
 
-              <Section title="Timeline" open={openSection === 'timeline'} onToggle={() => toggle('timeline')}>
-                <PlantTimeline key={ui.timelineKey} userPlantId={id} withinScrollView />
+              <Section 
+                title="Timeline" 
+                open={openSection === 'timeline'} 
+                onToggle={() => toggle('timeline')}
+              >
+                {/* Event Type Dropdown - on its own line */}
+                <View style={{ marginBottom: 12 }}>
+                  <View style={{ position: 'relative', alignSelf: 'flex-end' }}>
+                    {timelineEventTypeOpen && (
+                      <TouchableOpacity 
+                        onPress={() => setTimelineEventTypeOpen(false)} 
+                        style={StyleSheet.absoluteFillObject} 
+                      />
+                    )}
+                    <TouchableOpacity
+                      onPress={() => setTimelineEventTypeOpen((o) => !o)}
+                      activeOpacity={0.8}
+                      style={{
+                        borderWidth: StyleSheet.hairlineWidth,
+                        borderColor: theme.colors.border,
+                        backgroundColor: theme.colors.input,
+                        borderRadius: 8,
+                        paddingLeft: 10,
+                        paddingRight: 30,
+                        paddingVertical: 6,
+                        minWidth: 100,
+                      }}
+                    >
+                      <ThemedText style={{ fontSize: 13, fontWeight: '600' }}>
+                        {timelineEventType}
+                      </ThemedText>
+                      <View style={{ position: 'absolute', right: 6, top: 0, bottom: 0, justifyContent: 'center', alignItems: 'center' }}>
+                        <IconSymbol name={timelineEventTypeOpen ? 'chevron.up' : 'chevron.down'} size={16} color={theme.colors.mutedText} />
+                      </View>
+                    </TouchableOpacity>
+                    {timelineEventTypeOpen && (
+                      <View
+                        style={{
+                          position: 'absolute',
+                          top: 32,
+                          right: 0,
+                          zIndex: 100,
+                          borderWidth: StyleSheet.hairlineWidth,
+                          borderColor: theme.colors.border,
+                          borderRadius: 8,
+                          overflow: 'hidden',
+                          backgroundColor: theme.colors.card,
+                          shadowColor: '#000',
+                          shadowOpacity: 0.12,
+                          shadowRadius: 8,
+                          shadowOffset: { width: 0, height: 4 },
+                          elevation: 4,
+                          minWidth: 100,
+                        }}
+                      >
+                        {(['Water', 'Fertilize'] as const).map((type) => (
+                          <TouchableOpacity
+                            key={type}
+                            onPress={() => { setTimelineEventType(type); setTimelineEventTypeOpen(false); }}
+                            style={{ paddingHorizontal: 12, paddingVertical: 10, backgroundColor: timelineEventType === type ? theme.colors.input : 'transparent' }}
+                          >
+                            <ThemedText style={{ fontWeight: '600', fontSize: 13 }}>{type}</ThemedText>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                    )}
+                  </View>
+                </View>
+
+                {/* Chart */}
+                <TimelineChart eventType={timelineEventType} userPlantId={id} />
+
+                {/* Calendar Component */}
+                <TimelineCalendar eventType={timelineEventType} userPlantId={id} />
               </Section>
 
               <Section title="Environment" open={openSection === 'environment'} onToggle={() => toggle('environment')}>
@@ -664,7 +766,6 @@ export default function PlantDetailScreen() {
                     setDrafts((d) => ({ ...d, potNote: '' }));
                   }}
                   onMove={() => {
-                    setDrafts((d) => ({ ...d, location: plant.location || '' }));
                     setModals((m) => ({ ...m, location: true }));
                   }}
                   SoilMixSlot={
@@ -833,12 +934,18 @@ export default function PlantDetailScreen() {
           }
         }}
       />
-      <LocationModal
+      <TaxonomyModal
+        open={modals.taxonomy}
+        onClose={() => setModals((m) => ({ ...m, taxonomy: false }))}
+        speciesTaxonId={plant.speciesTaxonId}
+      />
+      <MoveModal
         open={modals.location}
-        value={drafts.location}
-        onChange={(t) => setDrafts((d) => ({ ...d, location: t }))}
-        onCancel={() => setModals((m) => ({ ...m, location: false }))}
-        onSave={saveLocation}
+        userPlantId={id}
+        currentLocationId={plant.locationId}
+        currentLocationName={plant.location}
+        onClose={() => setModals((m) => ({ ...m, location: false }))}
+        onSaved={handleMoveSaved}
       />
       <SoilModal
         open={modals.soil}

@@ -1,8 +1,6 @@
 import { Image } from 'expo-image';
-import React, { useEffect, useState, useCallback } from 'react';
-import { StyleSheet, View, TouchableOpacity, RefreshControl, TextInput, ActivityIndicator } from 'react-native';
-
-import ParallaxScrollView from '@/components/parallax-scroll-view';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
+import { StyleSheet, View, TouchableOpacity, RefreshControl, TextInput, ActivityIndicator, Pressable, ScrollView, Platform } from 'react-native';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import FavoritePlantCard from '@/components/favorite-plant-card';
@@ -14,6 +12,13 @@ import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import SkeletonTile from '@/components/SkeletonTile'; // ⬅️ NEW
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import PlantGallery from '@/components/PlantGallery';
+import MoveModal from '@/components/MoveModal';
+import UpdateLightModal from '@/components/UpdateLightModal';
+import UpdateTypeModal from '@/components/UpdateTypeModal';
+import { usePlantImageCache } from '@/context/PlantImageCacheContext';
+
+// Module-level variable to persist plant ID across component remounts
+let lastSelectedPlantId: string | null = null;
 
 type JoinedPhotoRow = { id: string; bucket: string; object_path: string };
 
@@ -26,6 +31,7 @@ type UserPlantJoined = {
   acquired_from: string | null;
   location_id: string | null;
   default_plant_photo_id: string | null;
+  updated_at: string | null;
   plants: {
     id: string;
     plant_name: string | null;
@@ -44,19 +50,39 @@ export default function PlantsScreen() {
   const { user } = useAuth();
   const { theme } = useTheme();
   const nav = useNavigation();
+  const { getCachedImage } = usePlantImageCache();
   const [plants, setPlants] = useState<Plant[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false); // ⬅️ for pull-to-refresh
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [groupBy, setGroupBy] = useState<'none' | 'location' | 'genus'>('location');
+  const [selectedPlantIds, setSelectedPlantIds] = useState<string[]>([]);
+  const [moveModalOpen, setMoveModalOpen] = useState(false);
+  const [lightModalOpen, setLightModalOpen] = useState(false);
+  const [typeModalOpen, setTypeModalOpen] = useState(false);
+  const [clearSelectionTrigger, setClearSelectionTrigger] = useState(0);
+  const scrollViewRef = useRef<ScrollView>(null);
+  const lastSelectedPlantIdRef = useRef<string | null>(null);
+  const [viewportBounds, setViewportBounds] = useState({ top: 0, bottom: 0 });
+  
+  // Sync module-level variable with ref on mount
+  useEffect(() => {
+    if (lastSelectedPlantId) {
+      lastSelectedPlantIdRef.current = lastSelectedPlantId;
+    }
+  }, []);
+  
 
 
-  const fetchPlants = useCallback(async () => {
-    if (!user?.id) return;
+  const fetchPlants = useCallback(async (isRefresh = false) => {
+    if (!user?.id) {
+      return;
+    }
     // Show skeletons only if first load; pull-to-refresh uses its own spinner
-    const firstLoad = plants.length === 0 && !refreshing;
+    const firstLoad = !isRefresh && plantsLengthRef.current === 0;
     if (firstLoad) setLoading(true);
+    if (isRefresh) setRefreshing(true);
     setError(null);
     try {
       let query = supabase
@@ -69,11 +95,17 @@ export default function PlantsScreen() {
           acquired_from,
           location_id,
           default_plant_photo_id,
+          lineage,
+          light_type,
+          system_type,
+          water_delay,
+          updated_at,
           plants:plants_table_id (
             id,
             plant_name,
             plant_scientific_name,
-            genus
+            genus,
+            schedule_same_year_round
           ),
           location:location_id (
             id,
@@ -85,7 +117,8 @@ export default function PlantsScreen() {
             object_path
           )
         `)
-        .eq('owner_id', user.id);
+        .eq('owner_id', user.id)
+        .is('deceased_at', null); // Exclude deceased plants
 
       const q = search.trim();
       if (q.length > 0) {
@@ -190,29 +223,38 @@ export default function PlantsScreen() {
         }
       }
 
-      // Map to UI model
-      const mapped: Plant[] = rows.map((row) => {
+      // Map to UI model with cached images
+      const mappedPromises = rows.map(async (row) => {
         const ref = row.plants ?? ({} as UserPlantJoined['plants']);
         const displayName = row.nickname || ref?.plant_name || 'Unnamed Plant';
         const sci = ref?.plant_scientific_name || '';
 
-        let imageUri = '';
-        const pr = row.photo?.[0];
-        if (pr?.object_path) {
-          imageUri = signedMap.get(`${pr.bucket || 'plant-photos'}|${pr.object_path}`) || '';
-        } else if (row.default_plant_photo_id && typeof row.default_plant_photo_id === 'string') {
-          if (uuidRe.test(row.default_plant_photo_id)) {
-            // Use the fetched row
-            const fetched = fetchedPhotoRows[row.default_plant_photo_id];
-            if (fetched?.object_path) {
-              imageUri =
-                signedMap.get(`${fetched.bucket}|${fetched.object_path}`) || '';
+        // Generate URI function for cache
+        const generateImageUri = async (): Promise<string> => {
+          const pr = row.photo?.[0];
+          if (pr?.object_path) {
+            return signedMap.get(`${pr.bucket || 'plant-photos'}|${pr.object_path}`) || '';
+          } else if (row.default_plant_photo_id && typeof row.default_plant_photo_id === 'string') {
+            if (uuidRe.test(row.default_plant_photo_id)) {
+              // Use the fetched row
+              const fetched = fetchedPhotoRows[row.default_plant_photo_id];
+              if (fetched?.object_path) {
+                return signedMap.get(`${fetched.bucket}|${fetched.object_path}`) || '';
+              }
+            } else {
+              // Legacy path
+              return signedMap.get(`plant-photos|${row.default_plant_photo_id}`) || '';
             }
-          } else {
-            // Legacy path
-            imageUri = signedMap.get(`plant-photos|${row.default_plant_photo_id}`) || '';
           }
-        }
+          return '';
+        };
+
+        // Use cache to get image URI
+        const imageUri = await getCachedImage(
+          String(row.id),
+          row.updated_at || null,
+          generateImageUri
+        );
 
         return {
           id: String(row.id),
@@ -221,59 +263,255 @@ export default function PlantsScreen() {
           imageUri,
           location: row.location?.name,
           genus: ref?.genus || undefined,
+          lineage: (row as any).lineage || undefined,
+          lightType: (row as any).light_type || undefined,
+          systemType: (row as any).system_type || undefined,
+          scheduleSameYearRound: (ref as any)?.schedule_same_year_round ?? undefined,
+          waterDelay: (row as any).water_delay ?? undefined,
         };
       });
 
+      const mapped = await Promise.all(mappedPromises);
+
       setPlants(mapped);
     } catch (e: any) {
+      console.error('[PlantsScreen] fetchPlants ERROR', e);
       setError(e?.message ?? 'Failed to load plants');
     } finally {
       setLoading(false);
       setRefreshing(false); // ensure we end pull-to-refresh if active
     }
-  }, [user?.id, refreshing, plants.length, search]);
-
+  }, [user?.id, search, getCachedImage]); // Added getCachedImage dependency
+  
+  // Use ref to access current plants.length without adding to dependencies
+  const plantsLengthRef = useRef(0);
   useEffect(() => {
-    fetchPlants();
+    plantsLengthRef.current = plants.length;
+  }, [plants.length]);
+  
+  useEffect(() => {
+    if (user?.id) {
+      fetchPlants(false);
+    }
   }, [user?.id, fetchPlants]);
 
   // Debounce search updates
   useEffect(() => {
+    if (!user?.id) return;
     const t = setTimeout(() => {
-      fetchPlants();
+      fetchPlants(false);
     }, 250);
-    return () => clearTimeout(t);
-  }, [search, fetchPlants]);
+    return () => {
+      clearTimeout(t);
+    };
+  }, [search, fetchPlants, user?.id]);
+
+  // Store plants in ref to avoid dependency issues
+  const plantsRef = useRef<Plant[]>([]);
+  useEffect(() => {
+    plantsRef.current = plants;
+  }, [plants]);
+
+  // Scroll to plant when plants load and we have a selected plant ID
+  useEffect(() => {
+    if (lastSelectedPlantIdRef.current && plants.length > 0 && !loading && !refreshing) {
+      const plantId = lastSelectedPlantIdRef.current;
+      const plant = plants.find(p => p.id === plantId);
+      
+      if (plant && scrollViewRef.current) {
+        // Calculate position accounting for grouping
+        // This matches how PlantGallery renders: groups with headers, then items
+        const getGroupKey = (p: Plant): string => {
+          switch (groupBy) {
+            case 'location':
+              return p.location || 'No Location';
+            case 'genus':
+              return p.genus || 'Unknown Genus';
+            default:
+              return '';
+          }
+        };
+
+        // Build grouped structure (same as PlantGallery)
+        const groups: Record<string, Plant[]> = {};
+        for (const p of plants) {
+          const key = getGroupKey(p);
+          if (!groups[key]) {
+            groups[key] = [];
+          }
+          groups[key].push(p);
+        }
+
+        // Sort groups (same logic as PlantGallery)
+        const fallbackKeys = ['No Location', 'Unknown Genus'];
+        const sortedKeys = Object.keys(groups)
+          .filter(k => !fallbackKeys.includes(k))
+          .sort()
+          .concat(fallbackKeys.filter(k => groups[k]));
+
+        // Calculate scroll position
+        // For small grid: cards are ~30% width, aspectRatio 1 image + text = ~140-150px total height
+        // Account for row spacing and margins
+        let scrollY = 80; // Title height (title container + padding)
+        let found = false;
+        
+        // Estimate item height based on grid size
+        // Small grid: ~140px per card (image ~100px + text ~40px), but cards are in rows of 3
+        // So we need to account for row height, not individual card height
+        const itemsPerRow = 3; // Small grid has 3 columns
+        const rowHeight = 160; // Approximate height per row (card + spacing)
+        
+        for (const groupKey of sortedKeys) {
+          const groupPlants = groups[groupKey];
+          if (groupKey) {
+            scrollY += 38; // Group header height
+          }
+          
+          // Process plants in rows
+          for (let i = 0; i < groupPlants.length; i += itemsPerRow) {
+            const rowPlants = groupPlants.slice(i, i + itemsPerRow);
+            const plantInRow = rowPlants.find(p => p.id === plantId);
+            
+            if (plantInRow) {
+              found = true;
+              break;
+            }
+            
+            // Add row height for each complete row
+            scrollY += rowHeight;
+          }
+          
+          if (found) break;
+        }
+
+        // Wait for layout to complete, then scroll
+        const scrollTimeout = setTimeout(() => {
+          if (scrollViewRef.current) {
+            // Adjust scroll position to position the plant near the top of visible area
+            // Reduced padding to scroll further down
+            const adjustedScrollY = Math.max(0, scrollY - 120); // Reduced padding from 200 to 120
+            scrollViewRef.current.scrollTo({ y: adjustedScrollY, animated: true });
+          }
+          lastSelectedPlantIdRef.current = null; // Clear after scrolling
+          lastSelectedPlantId = null; // Clear module-level variable
+        }, 1200); // Increased delay to ensure layout is complete
+        return () => {
+          clearTimeout(scrollTimeout);
+        };
+      } else if (!plant) {
+        lastSelectedPlantIdRef.current = null;
+      }
+    }
+  }, [plants, loading, refreshing, groupBy]);
 
   useFocusEffect(
     useCallback(() => {
-      fetchPlants();
-      return () => {};
-    }, [fetchPlants])
+      if (user?.id) {
+        fetchPlants(false);
+      }
+
+      return () => {
+        // Clear selection when screen loses focus
+        setSelectedPlantIds([]);
+        setClearSelectionTrigger(prev => prev + 1);
+        // DON'T clear lastSelectedPlantIdRef here - we need it for scrolling when we return
+      };
+    }, [fetchPlants, user?.id])
   );
 
   // Pull-to-refresh handler
   const onRefresh = useCallback(() => {
-    setRefreshing(true);
-    // fetchPlants will setRefreshing(false) in finally
-    fetchPlants();
+    fetchPlants(true); // Pass isRefresh flag
   }, [fetchPlants]);
+  const selectionMode = selectedPlantIds.length > 0;
+  const selectionCount = selectedPlantIds.length;
+
+  const clearSelection = useCallback(() => {
+    setSelectedPlantIds([]);
+    setClearSelectionTrigger(prev => prev + 1); // Trigger PlantGallery to clear selection
+  }, []);
 
   return (
     <View style={{ flex: 1 }}>
-      <ParallaxScrollView
-        headerBackgroundColor={{ light: '#E5F4EF', dark: '#12231F' }}
-        headerImage={
-          <Image
-            source={require('../../assets/images/plants-header.jpg')}
-            contentFit="cover"
-            transition={200}
-            style={{ width: '100%', height: '100%' }}
-          />
+      {/* Selection Toolbar - sticky at top */}
+      {selectionMode && (
+        <View
+          style={[
+            styles.selectionToolbar,
+            { backgroundColor: theme.colors.card, borderColor: theme.colors.border },
+          ]}
+        >
+          <View>
+            <ThemedText style={styles.selectionToolbarText}>
+              {selectionCount} selected
+            </ThemedText>
+            <Pressable onPress={clearSelection} hitSlop={12}>
+              <ThemedText style={styles.selectionToolbarClear}>Clear</ThemedText>
+            </Pressable>
+          </View>
+          <View style={styles.selectionToolbarActions}>
+            <Pressable
+              style={styles.selectionToolbarButton}
+              onPress={() => {
+                if (selectedPlantIds.length > 0) {
+                  setTypeModalOpen(true);
+                }
+              }}
+              disabled={selectedPlantIds.length === 0}
+            >
+              <IconSymbol name="tag" size={20} color={theme.colors.text} />
+              <ThemedText style={styles.selectionToolbarButtonLabel}>Type</ThemedText>
+            </Pressable>
+            <Pressable
+              style={styles.selectionToolbarButton}
+              onPress={() => {
+                if (selectedPlantIds.length > 0) {
+                  setLightModalOpen(true);
+                }
+              }}
+              disabled={selectedPlantIds.length === 0}
+            >
+              <IconSymbol name="sun.max" size={20} color={theme.colors.text} />
+              <ThemedText style={styles.selectionToolbarButtonLabel}>Light</ThemedText>
+            </Pressable>
+            <Pressable
+              style={styles.selectionToolbarButton}
+              onPress={() => {
+                if (selectedPlantIds.length > 0) {
+                  setMoveModalOpen(true);
+                }
+              }}
+              disabled={selectedPlantIds.length === 0}
+            >
+              <IconSymbol name="arrow.right" size={20} color={theme.colors.text} />
+              <ThemedText style={styles.selectionToolbarButtonLabel}>Move</ThemedText>
+            </Pressable>
+          </View>
+        </View>
+      )}
+      <ScrollView
+        ref={scrollViewRef}
+        style={styles.scrollView}
+        contentContainerStyle={styles.scrollContent}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
-        refreshing={refreshing}
-        onRefresh={onRefresh}
+        onScroll={(event) => {
+          const { contentOffset, layoutMeasurement } = event.nativeEvent;
+          const top = contentOffset.y;
+          const bottom = top + layoutMeasurement.height;
+          setViewportBounds({ top, bottom });
+        }}
+        scrollEventThrottle={100}
       >
+        {/* Title */}
+        <View style={styles.titleContainer}>
+          <ThemedText style={styles.title}>
+            My Plants{' '}
+            <ThemedText style={styles.plantCount}>({plants.length})</ThemedText>
+          </ThemedText>
+        </View>
+        
         <PlantGallery
           plants={plants}
           loading={loading}
@@ -286,7 +524,7 @@ export default function PlantsScreen() {
           enableViewToggle={true}
 
           // default layout: 'gridsmall' | 'gridmed' | 'list'
-          defaultLayout="gridmed"
+          defaultLayout="gridsmall"
 
           // search wired to your server-side filtering
           searchValue={search}
@@ -298,9 +536,20 @@ export default function PlantsScreen() {
           defaultGroupBy="location"
 
           // navigate on item press
-          onItemPress={(p) => (nav as any).navigate('PlantDetail', { id: p.id })}
+          onItemPress={(p) => {
+            lastSelectedPlantIdRef.current = p.id;
+            lastSelectedPlantId = p.id; // Store in module-level variable
+            (nav as any).navigate('PlantDetail', { id: p.id });
+          }}
+          
+          // selection
+          onSelectionChange={setSelectedPlantIds}
+          clearSelectionTrigger={clearSelectionTrigger}
+          
+          // viewport for image rendering
+          viewportBounds={viewportBounds}
         />
-      </ParallaxScrollView>
+      </ScrollView>
 
       <TouchableOpacity
         onPress={() => (nav as any).navigate('AddPlant')}
@@ -318,11 +567,113 @@ export default function PlantsScreen() {
           <ThemedText style={styles.fabPlus}>+</ThemedText>
         </View>
       </TouchableOpacity>
+
+      <MoveModal
+        open={moveModalOpen}
+        userPlantIds={selectedPlantIds}
+        onClose={() => setMoveModalOpen(false)}
+        onSaved={() => {
+          setMoveModalOpen(false);
+          setSelectedPlantIds([]);
+          setClearSelectionTrigger(prev => prev + 1); // Trigger PlantGallery to clear selection
+          fetchPlants(false);
+        }}
+      />
+      <UpdateLightModal
+        open={lightModalOpen}
+        userPlantIds={selectedPlantIds}
+        onClose={() => setLightModalOpen(false)}
+        onSaved={() => {
+          setLightModalOpen(false);
+          setSelectedPlantIds([]);
+          setClearSelectionTrigger(prev => prev + 1); // Trigger PlantGallery to clear selection
+          fetchPlants(false);
+        }}
+      />
+      <UpdateTypeModal
+        open={typeModalOpen}
+        userPlantIds={selectedPlantIds}
+        onClose={() => setTypeModalOpen(false)}
+        onSaved={() => {
+          setTypeModalOpen(false);
+          setSelectedPlantIds([]);
+          setClearSelectionTrigger(prev => prev + 1); // Trigger PlantGallery to clear selection
+          fetchPlants(false);
+        }}
+      />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  scrollView: {
+    flex: 1,
+  },
+  scrollContent: {
+    flexGrow: 1,
+    paddingLeft: 26, // Reduced by 5px from 31
+    paddingRight: 26, // 16 (existing) + 10 (additional) = 26px total right padding
+  },
+  plantCount: {
+    fontSize: 18, // Smaller than title (which is 32)
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    color: '#3B82F6', // Blue color
+  },
+  titleContainer: {
+    paddingLeft: 0, // Reduced from 26
+    paddingRight: 26,
+    paddingTop: 20,
+    paddingBottom: 24, // Increased from 16
+  },
+  title: {
+    fontSize: 32,
+    fontWeight: '700',
+  },
+  selectionToolbar: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    zIndex: 1000,
+    elevation: 10,
+  },
+  selectionToolbarText: {
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  selectionToolbarClear: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#3B82F6',
+    marginTop: 4,
+  },
+  selectionToolbarActions: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  selectionToolbarButton: {
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    paddingVertical: 6,
+    paddingHorizontal: 4,
+    borderRadius: 10,
+    borderWidth: 0,
+    width: 88,
+  },
+  selectionToolbarButtonLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    opacity: 0.8,
+    textAlign: 'center',
+  },
   fab: {
     position: 'absolute',
     right: 16,

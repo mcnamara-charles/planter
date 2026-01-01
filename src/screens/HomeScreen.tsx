@@ -95,6 +95,22 @@ export default function HomeScreen() {
             <ThemedText style={styles.cardLabel}>Recent Activity</ThemedText>
           </View>
         </TouchableOpacity>
+
+        {/* Card 5: Explore */}
+        <TouchableOpacity 
+          style={[styles.dashboardCard, { backgroundColor: theme.colors.card, borderColor: theme.colors.border }]}
+          activeOpacity={0.7}
+          onPress={() => (nav as any).navigate('Explore')}
+        >
+          <View style={styles.cardContent}>
+            <View style={styles.cardHeader}>
+              <IconSymbol name="safari" size={24} color="#f59e0b" />
+              <IconSymbol name="chevron.right" size={16} color={theme.colors.mutedText} />
+            </View>
+            <ThemedText style={styles.cardNumber}>Explore</ThemedText>
+            <ThemedText style={styles.cardLabel}>Taxonomy</ThemedText>
+          </View>
+        </TouchableOpacity>
       </View>
     </ParallaxScrollView>
   );

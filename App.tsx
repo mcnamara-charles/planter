@@ -1,5 +1,6 @@
 import { StatusBar } from 'expo-status-bar'
 import { AuthProvider } from '@/context/AuthContext'
+import { PlantImageCacheProvider } from '@/context/PlantImageCacheContext'
 import * as Linking from 'expo-linking'
 import { useEffect } from 'react'
 import { supabase } from './services/supabaseClient'
@@ -51,7 +52,9 @@ export default function App() {
   return (
     <AuthProvider>
       <ThemeProvider>
+        <PlantImageCacheProvider>
           <ThemedApp />
+        </PlantImageCacheProvider>
       </ThemeProvider>
     </AuthProvider>
   )

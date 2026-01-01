@@ -1,5 +1,5 @@
 // ParallaxScrollView.tsx
-import React, { useState } from 'react';
+import React, { useState, useImperativeHandle, forwardRef } from 'react';
 import type { PropsWithChildren, ReactElement } from 'react';
 import { RefreshControl, StyleSheet, TouchableOpacity } from 'react-native';
 import Animated, {
@@ -32,7 +32,11 @@ type Props = PropsWithChildren<{
   lightboxImages?: { uri: string; id?: string }[];
 }>;
 
-export default function ParallaxScrollView({
+export type ParallaxScrollViewRef = {
+  scrollTo: (y: number, animated?: boolean) => void;
+};
+
+const ParallaxScrollView = forwardRef<ParallaxScrollViewRef, Props>(({
   children,
   headerImage,
   headerBackgroundColor,
@@ -42,12 +46,18 @@ export default function ParallaxScrollView({
   onRefresh,
   enableLightbox = false,
   lightboxImages = [],
-}: Props) {
+}, ref) => {
   const backgroundColor = useThemeColor({}, 'background');
   const colorScheme = useColorScheme() ?? 'light';
   const scrollRef = useAnimatedRef<Animated.ScrollView>();
   const scrollOffset = useScrollOffset(scrollRef);
   const [lightboxOpen, setLightboxOpen] = useState(false);
+
+  useImperativeHandle(ref, () => ({
+    scrollTo: (y: number, animated = true) => {
+      scrollRef.current?.scrollTo({ y, animated });
+    },
+  }));
 
   const headerAnimatedStyle = useAnimatedStyle(() => {
     return {
@@ -108,7 +118,11 @@ export default function ParallaxScrollView({
       )}
     </>
   );
-}
+});
+
+ParallaxScrollView.displayName = 'ParallaxScrollView';
+
+export default ParallaxScrollView;
 
 const styles = StyleSheet.create({
   header: {
@@ -121,7 +135,7 @@ const styles = StyleSheet.create({
   },
   content: {
     flex: 1,
-    padding: 32,
+    padding: 16, // Reduced from 32 to make cards wider
     gap: 16,
     overflow: 'hidden',
   },

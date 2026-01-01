@@ -3,6 +3,7 @@ import { useCallback, useState } from 'react';
 import {
   fetchUserPlantIdsNeedingRebuild,
   fetchOverdueUserPlantIdsByType, // NEW
+  coordinateFertilizeWithWater,
 } from '@/services/supabaseSchedules';
 import { useUpdateWaterSchedule, useUpdateFertilizeSchedule } from './useUpdateWaterSchedule';
 
@@ -40,40 +41,79 @@ export function useRebuildAllWaterSchedules() {
     const waterTargets = unique([...waterNeedRebuild, ...waterOverdue]);
     const fertTargets  = unique([...fertNeedRebuild,  ...fertOverdue]);
 
-    // We'll count operations (water + fert)
-    const totalOps = waterTargets.length + fertTargets.length;
-    setTotal(totalOps);
-
     // Debug
     // eslint-disable-next-line no-console
     console.log('[useRebuildAllWaterSchedules] water targets (need|overdue):', waterNeedRebuild.length, waterOverdue.length, '->', waterTargets.length);
     // eslint-disable-next-line no-console
     console.log('[useRebuildAllWaterSchedules] fert  targets (need|overdue):', fertNeedRebuild.length,  fertOverdue.length,  '->', fertTargets.length);
 
+    // Set total to number of operations we'll attempt (some may be skipped)
+    const totalOps = waterTargets.length + fertTargets.length;
+    setTotal(totalOps);
+
     if (totalOps === 0) {
       setLoading(false);
       return;
     }
 
+    // Track actual completed operations (excluding skipped ones)
+    let completedCount = 0;
+
+    // Track which plants had both schedules updated (for coordination)
+    const plantsWithBothSchedules = new Set<string>();
+
     // Run water updates
     for (const userPlantId of waterTargets) {
       try {
-        await updateWater(userPlantId);
+        const result = await updateWater(userPlantId);
+        // Only count if operation actually ran (not skipped)
+        if (result !== null) {
+          completedCount++;
+          setDoneCount(completedCount);
+          // Track if this plant also has a fertilize schedule that will be updated
+          if (fertTargets.includes(userPlantId)) {
+            plantsWithBothSchedules.add(userPlantId);
+          }
+        }
+        // If skipped (result === null), don't increment doneCount
       } catch (e: any) {
         setErrors(prev => [...prev, { userPlantId, message: e?.message ?? 'error' }]);
-      } finally {
-        setDoneCount(prev => prev + 1);
+        // Count errors as completed operations
+        completedCount++;
+        setDoneCount(completedCount);
       }
     }
 
     // Run fertilizer updates
     for (const userPlantId of fertTargets) {
       try {
-        await updateFertilize(userPlantId);
+        const result = await updateFertilize(userPlantId);
+        // Only count if operation actually ran (not skipped)
+        if (result !== null) {
+          completedCount++;
+          setDoneCount(completedCount);
+          // Track if this plant also had a water schedule updated
+          if (waterTargets.includes(userPlantId)) {
+            plantsWithBothSchedules.add(userPlantId);
+          }
+        }
+        // If skipped (result === null), don't increment doneCount
       } catch (e: any) {
         setErrors(prev => [...prev, { userPlantId, message: e?.message ?? 'error' }]);
-      } finally {
-        setDoneCount(prev => prev + 1);
+        // Count errors as completed operations
+        completedCount++;
+        setDoneCount(completedCount);
+      }
+    }
+
+    // After all updates, coordinate schedules for plants that had both updated
+    // This ensures coordination happens with the final state of both schedules
+    for (const userPlantId of plantsWithBothSchedules) {
+      try {
+        await coordinateFertilizeWithWater(userPlantId);
+      } catch (e: any) {
+        // Log but don't fail the rebuild
+        console.warn(`[useRebuildAllWaterSchedules] coordination error for ${userPlantId}:`, e);
       }
     }
 

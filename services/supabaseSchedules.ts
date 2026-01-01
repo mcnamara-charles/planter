@@ -40,6 +40,8 @@ type PlantSchedulingFields =
       fert_interval_days_active: number | null;
       fert_interval_days_inactive: number | null;
       light_type: string | null;
+      system_type: string | null;
+      water_delay: number | null; // Custom delay from user_plants table
     }
   | null;
 
@@ -96,16 +98,24 @@ export async function fetchOverdueUserPlantIdsByType(
     const today = atStartOfTodayLocal().toISOString();
   
     // Filter via the joined parent to be robust (captures rows even if schedules.owner_id is null)
-    const { data, error } = await supabase
+    // For water schedules, exclude reservoir plants
+    let query = supabase
       .from('user_plant_schedules')
       .select(`
         user_plant_id,
-        user_plants!inner ( owner_id )
+        user_plants!inner ( owner_id, system_type )
       `)
       .eq('event_type', eventType)
       .lt('next_run_at', today)
       .order('next_run_at', { ascending: true })
       .range(0, 9999); // explicit upper bound
+    
+    // For water schedules, exclude reservoir plants
+    if (eventType === 'water') {
+      query = query.neq('user_plants.system_type', 'reservoir');
+    }
+  
+    const { data, error } = await query;
   
     if (error) throw error;
     const rows = (data ?? []) as Array<{ user_plant_id: string }>;
@@ -127,7 +137,7 @@ export async function fetchOverdueUserPlantIdsByType(
     // 1) Fetch the current schedule row
     const { data: current, error: fetchErr } = await supabase
       .from('user_plant_schedules')
-      .select('id, next_run_at, event_data')
+      .select('id, next_run_at, event_data, user_plant_id, event_type')
       .eq('id', scheduleId)
       .maybeSingle();
   
@@ -164,7 +174,120 @@ export async function fetchOverdueUserPlantIdsByType(
       .maybeSingle();
   
     if (updateErr) throw updateErr;
+
+    // 5) If this is a water schedule, coordinate with fertilize schedule
+    if ((current as any).event_type === 'water') {
+      await coordinateFertilizeWithWater((current as any).user_plant_id);
+    }
+  
     return updated;
+}
+
+/**
+ * Coordinates fertilize and water schedules for a plant:
+ * 1. If fertilize is before water (and plant is not reservoir), push fertilize to water date
+ * 2. If fertilize is within 3 days after water, pull fertilize forward to water date
+ */
+export async function coordinateFertilizeWithWater(userPlantId: string): Promise<void> {
+  // Check if this is a reservoir plant (they only have fertilize, no water)
+  const { data: plantData, error: plantError } = await supabase
+    .from('user_plants')
+    .select('system_type')
+    .eq('id', userPlantId)
+    .maybeSingle();
+
+  if (plantError) throw plantError;
+  const isReservoir = plantData?.system_type === 'reservoir';
+
+  // Fetch both schedules
+  const { data: schedules, error: schedError } = await supabase
+    .from('user_plant_schedules')
+    .select('id, event_type, next_run_at, event_data')
+    .eq('user_plant_id', userPlantId)
+    .in('event_type', ['water', 'fertilize']);
+
+  if (schedError) throw schedError;
+  if (!schedules || schedules.length === 0) {
+    console.log(`${NS} coordinateFertilizeWithWater: No schedules found for ${userPlantId}`);
+    return;
+  }
+
+  const waterSchedule = schedules.find(s => s.event_type === 'water');
+  const fertSchedule = schedules.find(s => s.event_type === 'fertilize');
+
+  // For reservoir plants, skip coordination (they only have fertilize)
+  if (isReservoir) {
+    console.log(`${NS} coordinateFertilizeWithWater: Skipping reservoir plant ${userPlantId}`);
+    return;
+  }
+  
+  if (!waterSchedule || !fertSchedule) {
+    console.log(`${NS} coordinateFertilizeWithWater: Missing schedule for ${userPlantId}`, {
+      hasWater: !!waterSchedule,
+      hasFert: !!fertSchedule
+    });
+    return;
+  }
+
+  const waterDate = new Date(waterSchedule.next_run_at);
+  const fertDate = new Date(fertSchedule.next_run_at);
+  
+  // Normalize dates to midnight for accurate day comparison
+  const waterDateNormalized = new Date(waterDate);
+  waterDateNormalized.setHours(0, 0, 0, 0);
+  const fertDateNormalized = new Date(fertDate);
+  fertDateNormalized.setHours(0, 0, 0, 0);
+
+  // Calculate days difference (positive = fert is after water, negative = fert is before water)
+  const daysDiff = Math.floor((fertDateNormalized.getTime() - waterDateNormalized.getTime()) / (1000 * 60 * 60 * 24));
+
+  console.log(`${NS} coordinateFertilizeWithWater: ${userPlantId}`, {
+    waterDate: waterDateNormalized.toISOString(),
+    fertDate: fertDateNormalized.toISOString(),
+    daysDiff,
+    isReservoir
+  });
+
+  let newFertDate: Date | null = null;
+
+  // Rule 1: If fertilize is before water, push it to water date
+  if (daysDiff < 0) {
+    console.log(`${NS} coordinateFertilizeWithWater: Pushing fertilize back from ${fertDateNormalized.toISOString()} to ${waterDateNormalized.toISOString()}`);
+    newFertDate = waterDateNormalized;
+  }
+  // Rule 3: If fertilize is within 3 days after water, pull it forward to water date
+  else if (daysDiff > 0 && daysDiff <= 3) {
+    console.log(`${NS} coordinateFertilizeWithWater: Pulling fertilize forward from ${fertDateNormalized.toISOString()} to ${waterDateNormalized.toISOString()}`);
+    newFertDate = waterDateNormalized;
+  }
+
+  // Update fertilize schedule if needed
+  if (newFertDate) {
+    const existingEventData = (fertSchedule.event_data ?? {}) as any;
+    const updatedEventData = {
+      ...existingEventData,
+      coordinated_with_water: true,
+      coordinated_at: new Date().toISOString(),
+    };
+
+    console.log(`${NS} coordinateFertilizeWithWater: Updating fertilize schedule ${fertSchedule.id} to ${newFertDate.toISOString()}`);
+
+    const { error: updateError } = await supabase
+      .from('user_plant_schedules')
+      .update({
+        next_run_at: newFertDate.toISOString(),
+        event_data: updatedEventData,
+      })
+      .eq('id', fertSchedule.id);
+
+    if (updateError) {
+      console.error(`${NS} coordinateFertilizeWithWater: Update error`, updateError);
+      throw updateError;
+    }
+    console.log(`${NS} coordinateFertilizeWithWater: Successfully updated fertilize schedule`);
+  } else {
+    console.log(`${NS} coordinateFertilizeWithWater: No coordination needed (daysDiff: ${daysDiff})`);
+  }
 }
 
 /** Latest timeline event for a userPlant by type (or null). */
@@ -204,6 +327,8 @@ export async function fetchPlantSchedulingFieldsByUserPlant(
     .select(`
       id,
       light_type,
+      system_type,
+      water_delay,
       plants_table_id,
       plants:plants_table_id (
         id,
@@ -233,6 +358,8 @@ export async function fetchPlantSchedulingFieldsByUserPlant(
     fert_interval_days_active: plants.fert_interval_days_active as number | null,
     fert_interval_days_inactive: plants.fert_interval_days_inactive as number | null,
     light_type: (data as any).light_type as string | null,
+    system_type: (data as any).system_type as string | null,
+    water_delay: (data as any).water_delay as number | null,
   };
 }
 
@@ -278,6 +405,28 @@ export async function fetchSchedulesUpdatedAtMap(
   const map = new Map<string, string>();
   ((data ?? []) as ScheduleRow[]).forEach(r => {
     if (r.user_plant_id && r.updated_at) map.set(r.user_plant_id, r.updated_at);
+  });
+  return map;
+}
+
+/** Map of user_plant_id -> updated_at for user_plants (restricted to provided IDs). */
+export async function fetchUserPlantsUpdatedAtMap(
+  limitToUserPlantIds?: string[]
+): Promise<Map<string, string>> {
+  let query = supabase
+    .from('user_plants')
+    .select('id, updated_at');
+
+  if (limitToUserPlantIds && limitToUserPlantIds.length > 0) {
+    query = query.in('id', limitToUserPlantIds);
+  }
+
+  const { data, error } = await query;
+  if (error) throw error;
+
+  const map = new Map<string, string>();
+  ((data ?? []) as Array<{ id: string; updated_at: string }>).forEach(r => {
+    if (r.id && r.updated_at) map.set(r.id, r.updated_at);
   });
   return map;
 }
@@ -390,9 +539,10 @@ export async function fetchLatestTimelineByPlant(
 /**
  * Compute which plants need a schedule rebuild for a specific type:
  *  - No schedule exists, OR
- *  - latestTimeline(user_plant) > schedule.updated_at
+ *  - latestTimeline(user_plant) > schedule.updated_at, OR
+ *  - user_plants.updated_at > schedule.updated_at (plant was updated)
  *
- * All lookups are scoped to the user’s current user_plants.
+ * All lookups are scoped to the user's current user_plants.
  */
 export async function fetchUserPlantIdsNeedingRebuild(
   eventType: ScheduleEventType
@@ -400,21 +550,47 @@ export async function fetchUserPlantIdsNeedingRebuild(
   const allIds = await fetchAllUserPlantIds();
   if (allIds.length === 0) return [];
 
-  const [schedMap, latestMap] = await Promise.all([
-    fetchSchedulesUpdatedAtMap(eventType, allIds),
-    fetchLatestRelevantTimelineByPlant(eventType, allIds),
+  // For water schedules, exclude reservoir plants
+  let idsToCheck = allIds;
+  if (eventType === 'water') {
+    // Fetch system_type for all plants to filter out reservoir plants
+    const { data: plantsData, error: plantsError } = await supabase
+      .from('user_plants')
+      .select('id, system_type')
+      .in('id', allIds);
+    
+    if (plantsError) throw plantsError;
+    
+    // Filter out reservoir plants for water schedule rebuilds
+    idsToCheck = (plantsData ?? [])
+      .filter((p: any) => p.system_type !== 'reservoir')
+      .map((p: any) => p.id);
+  }
+
+  const [schedMap, latestMap, plantsUpdatedMap] = await Promise.all([
+    fetchSchedulesUpdatedAtMap(eventType, idsToCheck),
+    fetchLatestRelevantTimelineByPlant(eventType, idsToCheck),
+    fetchUserPlantsUpdatedAtMap(idsToCheck),
   ]);
 
   const needs: string[] = [];
-  for (const id of allIds) {
+  for (const id of idsToCheck) {
     const schedUpdatedAt = schedMap.get(id); // may be undefined
     const latestEventAt = latestMap.get(id); // may be undefined
+    const plantUpdatedAt = plantsUpdatedMap.get(id); // may be undefined
 
     if (!schedUpdatedAt) {
       // No schedule yet → include
       needs.push(id);
       continue;
     }
+
+    // Check if plant was updated after schedule
+    if (plantUpdatedAt && new Date(plantUpdatedAt).getTime() > new Date(schedUpdatedAt).getTime()) {
+      needs.push(id);
+      continue;
+    }
+
     if (!latestEventAt) {
       // No timeline events at all → schedule exists and nothing changed since → skip
       continue;

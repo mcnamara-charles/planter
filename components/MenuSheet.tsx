@@ -6,9 +6,11 @@ import { useTheme } from '@/context/themeContext';
 export default function MenuSheet({
   onEdit,
   onDelete,
+  onSetDeceased,
 }: {
   onEdit: () => void;
   onDelete: () => void;
+  onSetDeceased?: () => void;
 }) {
   const { theme } = useTheme();
   return (
@@ -16,6 +18,11 @@ export default function MenuSheet({
       <TouchableOpacity style={styles.menuItem} onPress={onEdit}>
         <ThemedText>Edit details</ThemedText>
       </TouchableOpacity>
+      {onSetDeceased && (
+        <TouchableOpacity style={styles.menuItem} onPress={onSetDeceased}>
+          <ThemedText>Set Deceased</ThemedText>
+        </TouchableOpacity>
+      )}
       <TouchableOpacity style={styles.menuItem} onPress={onDelete}>
         <ThemedText style={{ color: '#d11a2a', fontWeight: '600' }}>Delete</ThemedText>
       </TouchableOpacity>

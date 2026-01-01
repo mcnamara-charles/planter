@@ -12,9 +12,11 @@ type Props = {
   onToggle?: () => void;
   /** Optional: start open in uncontrolled mode */
   defaultOpen?: boolean;
+  /** Optional: custom content to render on the right side of the header */
+  headerRight?: React.ReactNode;
 };
 
-export default function Section({ title, children, open, onToggle, defaultOpen = false }: Props) {
+export default function Section({ title, children, open, onToggle, defaultOpen = false, headerRight }: Props) {
   const { theme } = useTheme();
 
   // Uncontrolled fallback if `open` isn't provided
@@ -39,7 +41,10 @@ export default function Section({ title, children, open, onToggle, defaultOpen =
         accessibilityLabel={`Toggle section ${title}`}
       >
         <ThemedText style={styles.sectionTitle}>{title}</ThemedText>
-        <ThemedText style={[styles.sectionIndicator, { color: theme.colors.text }]}>{isOpen ? '−' : '+'}</ThemedText>
+        <View style={styles.sectionHeaderRight}>
+          {headerRight}
+          <ThemedText style={[styles.sectionIndicator, { color: theme.colors.text }]}>{isOpen ? '−' : '+'}</ThemedText>
+        </View>
       </TouchableOpacity>
 
       {isOpen && (
@@ -64,6 +69,11 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   sectionTitle: { fontSize: 20, fontWeight: '800' },
+  sectionHeaderRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
   sectionIndicator: { fontSize: 24, opacity: 0.85 },
   sectionBody: { paddingHorizontal: 32, paddingVertical: 14 },
 });
