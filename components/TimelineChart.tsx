@@ -96,7 +96,7 @@ export default function TimelineChart({ eventType, userPlantId, height = 200 }: 
         // First check user_plants.water_delay, then fall back to plants table
         const { data: userPlant, error: userPlantError } = await supabase
           .from('user_plants')
-          .select('water_delay, plants_table_id')
+          .select('water_delay, plants_table_id, light_type')
           .eq('id', userPlantId)
           .maybeSingle();
 
@@ -114,25 +114,30 @@ export default function TimelineChart({ eventType, userPlantId, height = 200 }: 
           if (plantError) throw plantError;
 
           if (plantData) {
-            const now = new Date();
-
-            // Determine if we're in active season
-            if (plantData.schedule_same_year_round) {
+            // If using grow light, always use active interval (grow lights allow year-round growth)
+            if (userPlant.light_type === 'grow_light') {
               defaultDelayValue = plantData.water_interval_days_active;
             } else {
-              const startDate = plantData.active_season_start_date ? new Date(plantData.active_season_start_date) : null;
-              const endDate = plantData.active_season_end_date ? new Date(plantData.active_season_end_date) : null;
-              
-              if (startDate && endDate) {
-                // Check if we're in active season (handle year wrap-around)
-                const isActive = 
-                  (startDate <= endDate && now >= startDate && now <= endDate) ||
-                  (startDate > endDate && (now >= startDate || now <= endDate));
-                
-                defaultDelayValue = isActive ? plantData.water_interval_days_active : plantData.water_interval_days_inactive;
-              } else {
-                // Default to active if dates not set
+              const now = new Date();
+
+              // Determine if we're in active season
+              if (plantData.schedule_same_year_round) {
                 defaultDelayValue = plantData.water_interval_days_active;
+              } else {
+                const startDate = plantData.active_season_start_date ? new Date(plantData.active_season_start_date) : null;
+                const endDate = plantData.active_season_end_date ? new Date(plantData.active_season_end_date) : null;
+                
+                if (startDate && endDate) {
+                  // Check if we're in active season (handle year wrap-around)
+                  const isActive = 
+                    (startDate <= endDate && now >= startDate && now <= endDate) ||
+                    (startDate > endDate && (now >= startDate || now <= endDate));
+                  
+                  defaultDelayValue = isActive ? plantData.water_interval_days_active : plantData.water_interval_days_inactive;
+                } else {
+                  // Default to active if dates not set
+                  defaultDelayValue = plantData.water_interval_days_active;
+                }
               }
             }
           }

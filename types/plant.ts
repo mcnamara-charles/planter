@@ -10,6 +10,7 @@ export type Plant = {
   systemType?: 'normal' | 'reservoir' | null;
   scheduleSameYearRound?: boolean | null;
   waterDelay?: number | null;
+  hasActivePest?: boolean;
 };
 
 

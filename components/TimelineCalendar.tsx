@@ -146,6 +146,31 @@ const EVENT_MAP: Record<string, EventConfig> = {
       return chips;
     },
   },
+  pest_id: {
+    icon: 'exclamationmark.triangle.fill',
+    title: () => 'Pest ID',
+    chips: (e) => {
+      const d = e.event_data || {};
+      const chips: string[] = [];
+      if (d.pest_type) chips.push(String(d.pest_type));
+      if (d.severity) chips.push(String(d.severity));
+      if (d.treatments_completed !== undefined && d.treatments_total !== undefined) {
+        chips.push(`${d.treatments_completed}/${d.treatments_total} treatments`);
+      }
+      return chips;
+    },
+  },
+  pest_treat: {
+    icon: 'pest',
+    title: () => 'Pest Treatment',
+    chips: (e) => {
+      const d = e.event_data || {};
+      const chips: string[] = [];
+      if (d.treatment_type) chips.push(String(d.treatment_type));
+      if (d.includes_rinse) chips.push('Includes rinse');
+      return chips;
+    },
+  },
 };
 
 function getEventConfig(type: string): EventConfig {
@@ -292,7 +317,12 @@ export default function TimelineCalendar({ eventType, userPlantId }: TimelineCal
   const eventsByDate = useMemo(() => {
     const grouped: Record<string, CalendarEvent[]> = {};
     events.forEach((event) => {
-      const date = new Date(event.event_time);
+      // For pest_id events, use last_treatment_date if available, otherwise use event_time
+      let eventDate = event.event_time;
+      if (event.event_type === 'pest_id' && event.event_data?.last_treatment_date) {
+        eventDate = event.event_data.last_treatment_date;
+      }
+      const date = new Date(eventDate);
       const dateKey = d3TimeFormat.timeFormat('%Y-%m-%d')(date);
       if (!grouped[dateKey]) {
         grouped[dateKey] = [];
@@ -539,75 +569,92 @@ export default function TimelineCalendar({ eventType, userPlantId }: TimelineCal
                 return (
                   <View style={styles.eventsIndicator}>
                     {displayEvents.map((event, idx) => {
-                      // Determine dot style based on event type
                       const isWater = event.event_type === 'water';
                       const isFertilize = event.event_type === 'fertilize' || event.event_type === 'fertilizer';
                       const countsAsWatering = isFertilize && event.event_data?.is_watering === true;
-                    
-                    if (isWater) {
-                      // Blue dot for water
-                      return (
-                        <View
-                          key={event.id}
-                          style={[
-                            styles.eventDot,
-                            { backgroundColor: '#3B82F6' },
-                            idx > 0 && { marginLeft: 2 },
-                          ]}
-                        />
-                      );
-                    } else if (countsAsWatering) {
-                      // Half green, half blue for fertilize that counts as watering
-                      return (
-                        <View
-                          key={event.id}
-                          style={[
-                            styles.eventDot,
-                            styles.eventDotSplit,
-                            idx > 0 && { marginLeft: 2 },
-                          ]}
-                        >
-                          <View style={[StyleSheet.absoluteFillObject, { backgroundColor: '#10B981', borderTopLeftRadius: 3, borderBottomLeftRadius: 3, width: '50%' }]} />
-                          <View style={[StyleSheet.absoluteFillObject, { backgroundColor: '#3B82F6', borderTopRightRadius: 3, borderBottomRightRadius: 3, left: '50%', width: '50%' }]} />
-                        </View>
-                      );
-                    } else if (isFertilize) {
-                      // Green dot for fertilize only
-                      return (
-                        <View
-                          key={event.id}
-                          style={[
-                            styles.eventDot,
-                            { backgroundColor: '#10B981' },
-                            idx > 0 && { marginLeft: 2 },
-                          ]}
-                        />
-                      );
-                    } else if (event.event_type === 'observe') {
-                      // Yellow dot for observations
-                      return (
-                        <View
-                          key={event.id}
-                          style={[
-                            styles.eventDot,
-                            { backgroundColor: '#FBBF24' },
-                            idx > 0 && { marginLeft: 2 },
-                          ]}
-                        />
-                      );
-                    } else {
-                      // Grey dot for any other event type
-                      return (
-                        <View
-                          key={event.id}
-                          style={[
-                            styles.eventDot,
-                            { backgroundColor: '#6B7280' },
-                            idx > 0 && { marginLeft: 2 },
-                          ]}
-                        />
-                      );
-                    }
+                      const isPest = event.event_type === 'pest_id' || event.event_type === 'pest_treat';
+
+                      if (isWater) {
+                        return (
+                          <View
+                            key={event.id}
+                            style={[
+                              styles.eventDot,
+                              { backgroundColor: '#3B82F6' }, // blue
+                              idx > 0 && { marginLeft: 2 },
+                            ]}
+                          />
+                        );
+                      } else if (countsAsWatering) {
+                        return (
+                          <View
+                            key={event.id}
+                            style={[
+                              styles.eventDot,
+                              styles.eventDotSplit,
+                              idx > 0 && { marginLeft: 2 },
+                            ]}
+                          >
+                            <View style={[StyleSheet.absoluteFillObject, { backgroundColor: '#10B981', borderTopLeftRadius: 3, borderBottomLeftRadius: 3, width: '50%' }]} />
+                            <View style={[StyleSheet.absoluteFillObject, { backgroundColor: '#3B82F6', borderTopRightRadius: 3, borderBottomRightRadius: 3, left: '50%', width: '50%' }]} />
+                          </View>
+                        );
+                      } else if (isFertilize) {
+                        return (
+                          <View
+                            key={event.id}
+                            style={[
+                              styles.eventDot,
+                              { backgroundColor: '#10B981' }, // green
+                              idx > 0 && { marginLeft: 2 },
+                            ]}
+                          />
+                        );
+                      } else if (event.event_type === 'pest_id') {
+                        return (
+                          <View
+                            key={event.id}
+                            style={[
+                              styles.eventDot,
+                              { backgroundColor: '#EF4444' }, // red for pest ID
+                              idx > 0 && { marginLeft: 2 },
+                            ]}
+                          />
+                        );
+                      } else if (event.event_type === 'pest_treat') {
+                        return (
+                          <View
+                            key={event.id}
+                            style={[
+                              styles.eventDot,
+                              { backgroundColor: '#F97316' }, // orange for pest treat
+                              idx > 0 && { marginLeft: 2 },
+                            ]}
+                          />
+                        );
+                      } else if (event.event_type === 'observe') {
+                        return (
+                          <View
+                            key={event.id}
+                            style={[
+                              styles.eventDot,
+                              { backgroundColor: '#FBBF24' }, // yellow
+                              idx > 0 && { marginLeft: 2 },
+                            ]}
+                          />
+                        );
+                      } else {
+                        return (
+                          <View
+                            key={event.id}
+                            style={[
+                              styles.eventDot,
+                              { backgroundColor: '#6B7280' }, // grey
+                              idx > 0 && { marginLeft: 2 },
+                            ]}
+                          />
+                        );
+                      }
                     })}
                     {dayEvents.length > displayEvents.length && (
                       <ThemedText style={styles.eventCount}>+{dayEvents.length - displayEvents.length}</ThemedText>

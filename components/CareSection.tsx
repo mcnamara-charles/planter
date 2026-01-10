@@ -1,10 +1,10 @@
 // components/CareSection.tsx
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { StyleSheet, View, TouchableOpacity, Pressable } from 'react-native';
 import { ThemedText } from '@/components/themed-text';
 import { useTheme } from '@/context/themeContext';
 import { supabase } from '@/services/supabaseClient';
-import { ButtonPill } from '@/components/Buttons';
+import { IconSymbol } from '@/components/ui/icon-symbol';
 
 type CareRows = {
   care_light?: string | null;
@@ -42,6 +42,8 @@ export default function CareSection({
   onFertilize,
   onPrune,
   onObserve,
+  onIdentifyPest,
+  onTreatPest,
   showActionButtons = true, // control action buttons
   optimisticCare,
 }: {
@@ -57,6 +59,8 @@ export default function CareSection({
   onFertilize?: () => void;
   onPrune?: () => void;
   onObserve?: () => void;
+  onIdentifyPest?: () => void;
+  onTreatPest?: () => void;
   showActionButtons?: boolean;
   optimisticCare?: OptimisticCare;
 }) {
@@ -64,6 +68,7 @@ export default function CareSection({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [care, setCare] = useState<CareRows | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
 
 
   const fetchCare = useCallback(async () => {
@@ -257,39 +262,185 @@ export default function CareSection({
     );
   };
 
+  const careActions = [
+    { id: 'water', label: 'Water', icon: 'drop', color: '#3B82F6', bgColor: 'rgba(59, 130, 246, 0.12)', onPress: onWater, group: 'routine' },
+    { id: 'fertilize', label: 'Fertilize', icon: 'bolt', color: '#10B981', bgColor: 'rgba(16, 185, 129, 0.12)', onPress: onFertilize, group: 'routine' },
+    { id: 'prune', label: 'Prune', icon: 'scissors', color: '#10B981', bgColor: 'rgba(16, 185, 129, 0.12)', onPress: onPrune, group: 'routine' },
+    { id: 'observe', label: 'Observe', icon: 'eye', color: theme.colors.primary, bgColor: `${theme.colors.primary}20`, onPress: onObserve, group: 'monitor' },
+    { id: 'idPest', label: 'ID Pests', icon: 'exclamationmark.triangle.fill', color: '#EF4444', bgColor: 'rgba(239, 68, 68, 0.12)', onPress: onIdentifyPest, group: 'pest' },
+    { id: 'treatPest', label: 'Treat Pests', icon: 'pest', color: '#F97316', bgColor: 'rgba(249, 115, 22, 0.12)', onPress: onTreatPest, group: 'pest' },
+  ];
+
+  const routineActions = careActions.filter(a => a.group === 'routine');
+  const monitorActions = careActions.filter(a => a.group === 'monitor');
+  const pestActions = careActions.filter(a => a.group === 'pest');
+
   return (
     <View style={{ gap: 16 }}>
-      {/* Actions row */}
-      <View style={{ flexDirection: 'row', flexWrap: 'wrap', columnGap: 8, rowGap: 3 }}>
+      {/* Actions row - Premium Menu button */}
+      {showActionButtons && (
+        <View style={{ position: 'relative', zIndex: 1000 }}>
+          <Pressable
+            onPress={() => setMenuOpen(!menuOpen)}
+            style={({ pressed }) => [
+              styles.menuButton,
+              {
+                backgroundColor: menuOpen ? theme.colors.input : theme.colors.card,
+                borderColor: menuOpen ? theme.colors.primary : theme.colors.border,
+                borderWidth: menuOpen ? 2 : StyleSheet.hairlineWidth,
+                transform: [{ scale: pressed ? 0.98 : 1 }],
+              },
+            ]}
+          >
+            <View style={[styles.menuButtonIconContainer, { backgroundColor: `${theme.colors.primary}18` }]}>
+              <IconSymbol name="plus.circle.fill" size={20} color={theme.colors.primary} />
+            </View>
+            <View style={{ flex: 1, marginLeft: 8 }}>
+              <ThemedText style={[styles.menuButtonLabel, { color: theme.colors.text }]}>
+                Care Actions
+              </ThemedText>
+              <ThemedText style={[styles.menuButtonSubtext, { color: theme.colors.mutedText }]}>
+                Log care activities
+              </ThemedText>
+            </View>
+            <View style={[styles.menuButtonChevronContainer, { backgroundColor: menuOpen ? theme.colors.primary : `${theme.colors.mutedText}12` }]}>
+              <IconSymbol 
+                name={menuOpen ? 'chevron.up' : 'chevron.down'} 
+                size={12} 
+                color={menuOpen ? '#fff' : theme.colors.mutedText} 
+              />
+            </View>
+          </Pressable>
 
-        {/* Action pills - only show if showActionButtons is true */}
-        {showActionButtons && (
-          <>
-            <ButtonPill
-              label="Water"
-              variant="solid"
-              color="primary"
-              onPress={() => onWater?.()}
-              style={{ backgroundColor: '#10B981', borderColor: '#10B981' }}
-            />
-            <ButtonPill
-              label="Fertilize"
-              variant="solid"
-              color="primary"
-              onPress={() => onFertilize?.()}
-              style={{ backgroundColor: '#10B981', borderColor: '#10B981' }}
-            />
-            <ButtonPill
-              label="Prune"
-              variant="solid"
-              color="primary"
-              onPress={() => onPrune?.()}
-              style={{ backgroundColor: '#10B981', borderColor: '#10B981' }}
-            />
-            <ButtonPill label="Observe" variant="solid" color="primary" onPress={() => onObserve?.()} />
-          </>
-        )}
-      </View>
+          {menuOpen && (
+            <>
+              <Pressable 
+                style={[StyleSheet.absoluteFill, { zIndex: -1 }]} 
+                onPress={() => setMenuOpen(false)}
+              />
+              <View
+                style={[
+                  styles.menuDropdown,
+                  {
+                    backgroundColor: theme.colors.card,
+                    borderColor: theme.colors.border,
+                    shadowColor: '#000',
+                  },
+                ]}
+              >
+                {/* Routine Care Section */}
+                <View style={[styles.menuSection, { paddingTop: 6 }]}>
+                  <ThemedText style={[styles.menuSectionHeader, { color: theme.colors.mutedText }]}>
+                    Routine Care
+                  </ThemedText>
+                  {routineActions.map((action, index) => (
+                      <Pressable
+                        key={action.id}
+                        onPress={() => {
+                          setMenuOpen(false);
+                          action.onPress?.();
+                        }}
+                        style={({ pressed }) => [
+                          styles.menuItemPremium,
+                          { 
+                            backgroundColor: pressed ? theme.colors.input : 'transparent',
+                            opacity: pressed ? 0.9 : 1,
+                          },
+                        ]}
+                      >
+                        <View style={[styles.menuItemIconContainer, { backgroundColor: action.bgColor }]}>
+                          <IconSymbol name={action.icon as any} size={18} color={action.color} />
+                        </View>
+                        <View style={{ flex: 1, marginLeft: 8 }}>
+                          <ThemedText style={[styles.menuItemLabelPremium, { color: theme.colors.text }]}>
+                            {action.label}
+                          </ThemedText>
+                        </View>
+                        <View style={{ opacity: 0.5 }}>
+                          <IconSymbol name="chevron.right" size={14} color={theme.colors.mutedText} />
+                        </View>
+                      </Pressable>
+                  ))}
+                </View>
+
+                {/* Monitor Section */}
+                {monitorActions.length > 0 && (
+                  <View style={[styles.menuSection, { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: 'rgba(127,127,127,0.12)', paddingTop: 6, marginTop: 1 }]}>
+                    <ThemedText style={[styles.menuSectionHeader, { color: theme.colors.mutedText }]}>
+                      Monitor
+                    </ThemedText>
+                    {monitorActions.map((action) => (
+                      <Pressable
+                        key={action.id}
+                        onPress={() => {
+                          setMenuOpen(false);
+                          action.onPress?.();
+                        }}
+                        style={({ pressed }) => [
+                          styles.menuItemPremium,
+                          { 
+                            backgroundColor: pressed ? theme.colors.input : 'transparent',
+                            opacity: pressed ? 0.9 : 1,
+                          },
+                        ]}
+                      >
+                        <View style={[styles.menuItemIconContainer, { backgroundColor: action.bgColor }]}>
+                          <IconSymbol name={action.icon as any} size={18} color={action.color} />
+                        </View>
+                        <View style={{ flex: 1, marginLeft: 8 }}>
+                          <ThemedText style={[styles.menuItemLabelPremium, { color: theme.colors.text }]}>
+                            {action.label}
+                          </ThemedText>
+                        </View>
+                        <View style={{ opacity: 0.5 }}>
+                          <IconSymbol name="chevron.right" size={14} color={theme.colors.mutedText} />
+                        </View>
+                      </Pressable>
+                    ))}
+                  </View>
+                )}
+
+                {/* Pest Management Section */}
+                {pestActions.length > 0 && (
+                  <View style={[styles.menuSection, { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: 'rgba(127,127,127,0.12)', paddingTop: 6, marginTop: 1, paddingBottom: 4 }]}>
+                    <ThemedText style={[styles.menuSectionHeader, { color: theme.colors.mutedText }]}>
+                      Pest Management
+                    </ThemedText>
+                    {pestActions.map((action) => (
+                      <Pressable
+                        key={action.id}
+                        onPress={() => {
+                          setMenuOpen(false);
+                          action.onPress?.();
+                        }}
+                        style={({ pressed }) => [
+                          styles.menuItemPremium,
+                          { 
+                            backgroundColor: pressed ? theme.colors.input : 'transparent',
+                            opacity: pressed ? 0.9 : 1,
+                          },
+                        ]}
+                      >
+                        <View style={[styles.menuItemIconContainer, { backgroundColor: action.bgColor }]}>
+                          <IconSymbol name={action.icon as any} size={18} color={action.color} />
+                        </View>
+                        <View style={{ flex: 1, marginLeft: 8 }}>
+                          <ThemedText style={[styles.menuItemLabelPremium, { color: theme.colors.text }]}>
+                            {action.label}
+                          </ThemedText>
+                        </View>
+                        <View style={{ opacity: 0.5 }}>
+                          <IconSymbol name="chevron.right" size={14} color={theme.colors.mutedText} />
+                        </View>
+                      </Pressable>
+                    ))}
+                  </View>
+                )}
+              </View>
+            </>
+          )}
+        </View>
+      )}
 
       {/* Grower Type Display */}
       {typeof vm.schedule_same_year_round === 'boolean' && (
@@ -458,5 +609,94 @@ const styles = StyleSheet.create({
     width: 8,
     height: 8,
     borderRadius: 4,
+  },
+  menuButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 12,
+    gap: 8,
+    shadowColor: '#000',
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 3,
+  },
+  menuButtonIconContainer: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  menuButtonLabel: {
+    fontSize: 15,
+    fontWeight: '800',
+    letterSpacing: -0.3,
+    marginBottom: 0,
+  },
+  menuButtonSubtext: {
+    fontSize: 10,
+    fontWeight: '500',
+    opacity: 0.8,
+  },
+  menuButtonChevronContainer: {
+    width: 24,
+    height: 24,
+    borderRadius: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  menuDropdown: {
+    position: 'absolute',
+    top: '100%',
+    left: 0,
+    right: 0,
+    marginTop: 6,
+    borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+    overflow: 'hidden',
+    zIndex: 1001,
+    shadowColor: '#000',
+    shadowOpacity: 0.2,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 12,
+  },
+  menuSection: {
+    paddingHorizontal: 2,
+  },
+  menuSectionHeader: {
+    fontSize: 9,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    marginBottom: 0,
+    opacity: 0.7,
+  },
+  menuItemPremium: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+    borderRadius: 10,
+    marginHorizontal: 2,
+    marginVertical: 1,
+    minHeight: 44,
+  },
+  menuItemIconContainer: {
+    width: 34,
+    height: 34,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  menuItemLabelPremium: {
+    fontSize: 14,
+    fontWeight: '700',
+    letterSpacing: -0.3,
   },
 });

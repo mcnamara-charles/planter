@@ -6,6 +6,18 @@ import { useTheme } from '@/context/themeContext';
 import { supabase } from '@/services/supabaseClient';
 import { useAuth } from '@/context/AuthContext';
 import { IconSymbol } from '@/components/ui/icon-symbol';
+import { 
+  fetchPlantSchedulingFieldsByUserPlant,
+  fetchLatestEffectiveWateringEvent,
+  fetchLatestPestEvent,
+  calculateNextPestTreatmentDate,
+  upsertUserPlantSchedule,
+  atStartOfTodayLocal,
+  addDaysLocal,
+  isTodayInActive,
+  nextOccurrenceOfMonthDay,
+  toMD,
+} from '@/services/supabaseSchedules';
 
 export default function FertilizeModal({
   open,
@@ -200,6 +212,117 @@ export default function FertilizeModal({
                     note: null,
                   }));
                   await supabase.from('user_plant_timeline_events').insert(rows);
+                  
+                  // If isWatering=true, immediately update water schedules for normal plants
+                  if (isWatering) {
+                    const today = atStartOfTodayLocal();
+                    const updatePromises = plantIds.map(async (plantId) => {
+                      try {
+                        // Skip reservoir plants (they don't have water schedules)
+                        const sched = await fetchPlantSchedulingFieldsByUserPlant(plantId);
+                        if (!sched || sched.system_type === 'reservoir') return;
+                        
+                        // Get the latest effective watering event (now includes this fertilize event)
+                        const last = await fetchLatestEffectiveWateringEvent(plantId);
+                        if (!last) return;
+                        
+                        // Determine active season
+                        const activeNow = sched.light_type === 'grow_light' 
+                          ? true 
+                          : isTodayInActive(
+                              today,
+                              sched.active_season_start_date,
+                              sched.active_season_end_date,
+                              sched.schedule_same_year_round ?? null
+                            );
+                        
+                        // Get water interval
+                        let intervalDays: number | null;
+                        if (sched.water_delay !== null && sched.water_delay !== undefined) {
+                          intervalDays = sched.water_delay;
+                        } else {
+                          intervalDays = activeNow ? sched.water_interval_days_active ?? null : sched.water_interval_days_inactive ?? null;
+                        }
+                        
+                        // If no interval configured during inactive season, schedule for next season start
+                        if (!intervalDays || intervalDays <= 0) {
+                          if (!activeNow && sched.active_season_start_date) {
+                            const startMD = toMD(sched.active_season_start_date);
+                            if (startMD) {
+                              const nextSeasonStart = nextOccurrenceOfMonthDay(startMD.m, startMD.d, today);
+                              await upsertUserPlantSchedule({
+                                userPlantId: plantId,
+                                ownerId: user.id,
+                                eventType: 'water',
+                                nextRunAt: nextSeasonStart.toISOString(),
+                                eventData: { reason: 'next_season', activeNow: false, intervalDays: null },
+                              });
+                            }
+                          }
+                          return;
+                        }
+                        
+                        // Calculate next water date
+                        const lastAt = new Date(last.event_time);
+                        const lastMidnightLocal = new Date(lastAt);
+                        lastMidnightLocal.setHours(0, 0, 0, 0);
+                        const todayMidnightLocal = new Date(today);
+                        todayMidnightLocal.setHours(0, 0, 0, 0);
+                        
+                        const daysSince = Math.floor(
+                          (todayMidnightLocal.getTime() - lastMidnightLocal.getTime()) / (1000 * 60 * 60 * 24)
+                        );
+                        
+                        let nextAt = today;
+                        let reason: 'initial' | 'due' | 'projected' = 'initial';
+                        
+                        if (last?.event_time) {
+                          if (daysSince >= intervalDays) {
+                            reason = 'due';
+                            nextAt = today;
+                          } else {
+                            reason = 'projected';
+                            nextAt = addDaysLocal(lastMidnightLocal, intervalDays);
+                            if (nextAt < today) nextAt = today;
+                          }
+                        }
+                        
+                        // Check for pest events and adjust schedule to avoid conflicts
+                        const latestPestEvent = await fetchLatestPestEvent(plantId);
+                        const nextPestTreatment = calculateNextPestTreatmentDate(latestPestEvent, today);
+                        
+                        if (nextPestTreatment) {
+                          const pestDateMidnight = new Date(nextPestTreatment);
+                          pestDateMidnight.setHours(0, 0, 0, 0);
+                          const nextAtMidnight = new Date(nextAt);
+                          nextAtMidnight.setHours(0, 0, 0, 0);
+                          
+                          const daysDiff = Math.abs(
+                            (nextAtMidnight.getTime() - pestDateMidnight.getTime()) / (1000 * 60 * 60 * 24)
+                          );
+                          
+                          if (daysDiff <= 1 && nextAtMidnight <= pestDateMidnight) {
+                            nextAt = addDaysLocal(pestDateMidnight, 1);
+                          }
+                        }
+                        
+                        // Upsert water schedule
+                        await upsertUserPlantSchedule({
+                          userPlantId: plantId,
+                          ownerId: user.id,
+                          eventType: 'water',
+                          nextRunAt: nextAt.toISOString(),
+                          eventData: { reason, activeNow, intervalDays },
+                        });
+                      } catch (err) {
+                        console.warn('Failed to update water schedule after fertilize', err);
+                      }
+                    });
+                    
+                    // Wait for all water schedule updates to complete
+                    await Promise.all(updatePromises);
+                  }
+                  
                   onClose();
                   onSaved?.();
                 } catch {}

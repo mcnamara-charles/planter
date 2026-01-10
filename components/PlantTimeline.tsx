@@ -217,6 +217,39 @@ const EVENT_MAP: Record<string, EventConfig> = {
       return chips;
     },
   },
+  pest_id: {
+    icon: 'exclamationmark.triangle.fill',
+    title: () => 'Pest ID',
+    cardStyle: () => ({
+      backgroundColor: 'rgba(239, 68, 68, 0.12)', // red
+      borderColor: 'rgba(239, 68, 68, 0.35)',
+    }),
+    chips: (e) => {
+      const d = e.event_data || {};
+      const chips: string[] = [];
+      if (d.pest_type) chips.push(String(d.pest_type));
+      if (d.severity) chips.push(String(d.severity));
+      if (d.treatments_completed !== undefined && d.treatments_total !== undefined) {
+        chips.push(`${d.treatments_completed}/${d.treatments_total} treatments`);
+      }
+      return chips;
+    },
+  },
+  pest_treat: {
+    icon: 'pest',
+    title: () => 'Pest Treatment',
+    cardStyle: () => ({
+      backgroundColor: 'rgba(249, 115, 22, 0.12)', // orange (same as pest_id)
+      borderColor: 'rgba(249, 115, 22, 0.35)',
+    }),
+    chips: (e) => {
+      const d = e.event_data || {};
+      const chips: string[] = [];
+      if (d.treatment_type) chips.push(String(d.treatment_type));
+      if (d.includes_rinse) chips.push('Includes rinse');
+      return chips;
+    },
+  },
 };
 
 function getEventConfig(type: string): EventConfig {
@@ -414,7 +447,12 @@ export default function PlantTimeline({
     const groups: { dateLabel: string; items: TimelineEvent[] }[] = [];
     let current: { dateLabel: string; items: TimelineEvent[] } | null = null;
     for (const e of events) {
-      const lbl = formatDate(e.event_time);
+      // For pest_id events, use last_treatment_date if available, otherwise use event_time
+      let eventDate = e.event_time;
+      if (e.event_type === 'pest_id' && e.event_data?.last_treatment_date) {
+        eventDate = e.event_data.last_treatment_date;
+      }
+      const lbl = formatDate(eventDate);
       if (!current || current.dateLabel !== lbl) {
         current = { dateLabel: lbl, items: [] };
         groups.push(current);

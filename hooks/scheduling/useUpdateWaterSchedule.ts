@@ -7,6 +7,8 @@ import {
   ScheduleEventType,
   fetchLatestEffectiveWateringEvent,
   coordinateFertilizeWithWater,
+  fetchLatestPestEvent,
+  calculateNextPestTreatmentDate,
 } from '@/services/supabaseSchedules';
 
 const NS = '[useUpdatePlantSchedule]';
@@ -246,7 +248,30 @@ function makeUseUpdateSchedule(eventType: ScheduleEventType, pickInterval: Inter
           }
         }
 
-        // 3) Upsert schedule row
+        // 3) Check for pest events and adjust schedule to avoid conflicts
+        const latestPestEvent = await fetchLatestPestEvent(userPlantId);
+        const nextPestTreatment = calculateNextPestTreatmentDate(latestPestEvent, today);
+
+        if (nextPestTreatment) {
+          // If the calculated next run date conflicts with pest treatment (within 1 day), adjust it
+          const pestDateMidnight = new Date(nextPestTreatment);
+          pestDateMidnight.setHours(0, 0, 0, 0);
+          const nextAtMidnight = new Date(nextAt);
+          nextAtMidnight.setHours(0, 0, 0, 0);
+          
+          const daysDiff = Math.abs(
+            (nextAtMidnight.getTime() - pestDateMidnight.getTime()) / (1000 * 60 * 60 * 24)
+          );
+
+          // If water/fertilize is scheduled within 1 day of pest treatment, move it to the day after pest treatment
+          if (daysDiff <= 1 && nextAtMidnight <= pestDateMidnight) {
+            nextAt = addDaysLocal(pestDateMidnight, 1);
+            // eslint-disable-next-line no-console
+            console.log(`${NS}(${eventType}:${userPlantId}) adjusted schedule to avoid pest treatment conflict: ${nextAt.toISOString()}`);
+          }
+        }
+
+        // 4) Upsert schedule row
         const saved = await upsertUserPlantSchedule({
           userPlantId,
           eventType,
@@ -254,7 +279,7 @@ function makeUseUpdateSchedule(eventType: ScheduleEventType, pickInterval: Inter
           eventData: { reason, activeNow, intervalDays },
         });
 
-        // 4) Coordinate with the other event type (fertilize/water)
+        // 5) Coordinate with the other event type (fertilize/water)
         // If we just updated water, coordinate fertilize
         // If we just updated fertilize, coordinate with water
         // Always coordinate after updating either schedule

@@ -263,6 +263,14 @@ export default function LocationsScreen() {
                 <View style={styles.locationActions}>
                   <TouchableOpacity
                     style={styles.actionButton}
+                    onPress={() => nav.navigate('LocationPositioning', { locationId: location.id, locationName: location.name })}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Position ${location.name}`}
+                  >
+                    <IconSymbol name="position" size={16} color={theme.colors.mutedText} />
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.actionButton}
                     onPress={() => openEditModal(location)}
                     accessibilityRole="button"
                     accessibilityLabel={`Edit ${location.name}`}

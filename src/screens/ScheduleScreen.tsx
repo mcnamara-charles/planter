@@ -283,18 +283,21 @@ const CombinedScheduleCard = memo(function CombinedScheduleCard({
                 summary;
               
               // Determine icon based on event type
-              let iconName: string;
-              let displayLabel: string;
-              if (eventType === 'water_fertilize') {
-                iconName = 'leaf.fill';
-                displayLabel = 'Fertilize & Water';
-              } else if (eventType === 'water') {
-                iconName = 'drop.fill';
-                displayLabel = label;
-              } else {
-                iconName = 'leaf.fill';
-                displayLabel = label;
-              }
+            let iconName: string;
+            let displayLabel: string;
+            if (eventType === 'water_fertilize') {
+              iconName = 'leaf.fill';
+              displayLabel = 'Fertilize & Water';
+            } else if (eventType === 'water') {
+              iconName = 'drop.fill';
+              displayLabel = label;
+            } else if (eventType === 'pest_treat') {
+              iconName = 'exclamationmark.triangle.fill';
+              displayLabel = 'Treat';
+            } else {
+              iconName = 'leaf.fill';
+              displayLabel = label;
+            }
               
               // Determine urgency indicator color
               const urgencyColor = isToday
@@ -376,6 +379,7 @@ const CombinedScheduleCard = memo(function CombinedScheduleCard({
           {eventSummaries.map((summary: EventSummary) => {
             const { eventType, label, schedule } = summary;
             if (!schedule) return null;
+            if (eventType === 'pest_treat') return null;
             
             // Handle combined water_fertilize event
             if (eventType === 'water_fertilize') {
@@ -412,7 +416,13 @@ const CombinedScheduleCard = memo(function CombinedScheduleCard({
                 onPress={() => onCarePress(schedule, false, systemType)}
               >
                 <IconSymbol
-                  name={eventType === 'water' ? 'drop.fill' : 'leaf.fill'}
+                  name={
+                    eventType === 'water'
+                      ? 'drop.fill'
+                      : eventType === 'pest_treat'
+                      ? 'pest'
+                      : 'leaf.fill'
+                  }
                   size={24}
                   color={textColor}
                 />
@@ -432,7 +442,7 @@ export default function ScheduleScreen() {
   const { theme } = useTheme();
   const { user } = useAuth();
   const nav = useNavigation();
-  const { rebuild, loading: rebuilding, doneCount, total } =
+  const { rebuild, loading: rebuilding, doneCount, total, uniquePlantsCount, completedPlantsCount, currentPhase } =
     useRebuildAllWaterSchedules();
   const { updateOne: updateWaterSchedule } = useUpdateWaterSchedule();
   const { updateOne: updateFertilizeSchedule } = useUpdateFertilizeSchedule();
@@ -901,6 +911,9 @@ export default function ScheduleScreen() {
     loadAllImages();
   }, [metaReadyRef.current, schedules, imageCache]);
 
+  // TESTING FLAG: Set to true to force rebuild on every screen focus (matches FORCE_REBUILD_ALL in useRebuildAllWaterSchedules)
+  const FORCE_REBUILD_ON_FOCUS = false;
+
   // Rebuild once per user session, then fetch
   useEffect(() => {
     if (currentUserId.current !== user?.id) {
@@ -910,6 +923,10 @@ export default function ScheduleScreen() {
       signedUrlCacheRef.current = {};
       photoKeyByUserPlantRef.current = {};
       metaReadyRef.current = false;
+    }
+    // If FORCE_REBUILD_ON_FOCUS is enabled, always reset the flag to allow rebuild
+    if (FORCE_REBUILD_ON_FOCUS) {
+      hasRebuildRun.current = false;
     }
     if (hasRebuildRun.current || !user?.id) return;
 
@@ -932,7 +949,37 @@ export default function ScheduleScreen() {
   // Check for plant updates when screen comes into focus and rebuild if needed
   useFocusEffect(
     useCallback(() => {
-      if (!user?.id || !hasRebuildRun.current) {
+      if (!user?.id) {
+        // Clear selection when screen loses focus
+        return () => {
+          setSelectedCardIds({});
+        };
+      }
+
+      // If FORCE_REBUILD_ON_FOCUS is enabled, always trigger rebuild
+      if (FORCE_REBUILD_ON_FOCUS) {
+        (async () => {
+          hasRebuildRun.current = false; // Reset flag to allow rebuild
+          setRebuildModalVisible(true);
+          try {
+            // eslint-disable-next-line no-console
+            console.log('[ScheduleScreen] FORCE_REBUILD_ON_FOCUS enabled - triggering rebuild');
+            await rebuild();
+            await fetchSchedules();
+          } catch (err) {
+            console.error('Rebuild failed:', err);
+            await fetchSchedules();
+          } finally {
+            setRebuildModalVisible(false);
+          }
+        })();
+        return () => {
+          setSelectedCardIds({});
+        };
+      }
+
+      // Normal mode: Only rebuild if it has run before (on subsequent focuses)
+      if (!hasRebuildRun.current) {
         // Clear selection when screen loses focus
         return () => {
           setSelectedCardIds({});
@@ -978,15 +1025,61 @@ export default function ScheduleScreen() {
     }, [user?.id, rebuild, fetchSchedules])
   );
 
-  const onRefresh = useCallback(() => {
+  const onRefresh = useCallback(async () => {
+    if (!user?.id) {
+      setRefreshing(false);
+      return;
+    }
+
     setRefreshing(true);
     // Full reset so we re-sign everything on purpose
     setImageCache({});
     signedUrlCacheRef.current = {}; // clear cached failures too
     photoKeyByUserPlantRef.current = {};
     metaReadyRef.current = false;
-    fetchSchedules();
-  }, [fetchSchedules]);
+
+    try {
+      // Check if rebuild is needed (only check for timeline changes, not overdue items)
+      // Overdue items are handled by the normal rebuild process, not on every refresh
+      const { fetchUserPlantIdsNeedingRebuild, fetchUserPlantIdsNeedingPestScheduleUpdate } = await import('@/services/supabaseSchedules');
+      const [
+        waterNeedRebuild,
+        fertNeedRebuild,
+        pestNeedUpdate,
+      ] = await Promise.all([
+        fetchUserPlantIdsNeedingRebuild('water'),
+        fetchUserPlantIdsNeedingRebuild('fertilize'),
+        fetchUserPlantIdsNeedingPestScheduleUpdate(),
+      ]);
+
+      const needsRebuild = 
+        waterNeedRebuild.length > 0 ||
+        fertNeedRebuild.length > 0 ||
+        pestNeedUpdate.length > 0;
+
+      if (needsRebuild) {
+        // Show rebuild modal and rebuild (skip overdue items during refresh)
+        // Only rebuild plants with actual timeline changes
+        setRebuildModalVisible(true);
+        try {
+          await rebuild(true); // Pass true to skip overdue items
+        } catch (err) {
+          console.error('Rebuild failed during refresh:', err);
+        } finally {
+          setRebuildModalVisible(false);
+        }
+      }
+
+      // Always fetch schedules after rebuild check/rebuild
+      await fetchSchedules();
+    } catch (err) {
+      console.error('Error during refresh:', err);
+      // Still try to fetch schedules even if rebuild check failed
+      await fetchSchedules();
+    } finally {
+      setRefreshing(false);
+    }
+  }, [user?.id, rebuild, fetchSchedules]);
 
   const toggleLocation = useCallback((section: string) => {
     setOpenLocations((prev) => ({
@@ -1338,6 +1431,7 @@ export default function ScheduleScreen() {
     () => [
       { type: 'water', label: 'Water' },
       { type: 'fertilize', label: 'Fertilize' },
+      { type: 'pest_treat', label: 'Treat' },
     ],
     []
   );
@@ -1612,6 +1706,7 @@ export default function ScheduleScreen() {
           const schedule = combined.schedules[type];
 
           if (!schedule) {
+            if (type === 'pest_treat') return null;
             return {
               eventType: type,
               label,
@@ -1670,7 +1765,8 @@ export default function ScheduleScreen() {
             combinedText,
             schedule,
           };
-        });
+        })
+        .filter((e): e is EventSummary => !!e);
 
         // If we should cluster, add a combined event
         if (shouldCluster && waterSchedule && fertSchedule) {
@@ -1996,26 +2092,19 @@ export default function ScheduleScreen() {
           >
             <ActivityIndicator color={theme.colors.text as any} size="large" />
             <ThemedText style={styles.modalTitle}>Rebuilding Schedules</ThemedText>
-            <ThemedText style={styles.modalSubtitle}>
-              {doneCount} of {total} tasks
-            </ThemedText>
-            {total > 0 && (
-              <>
-                <View style={[styles.progressBarContainer, { backgroundColor: theme.colors.border }]}>
-                  <View
-                    style={[
-                      styles.progressBarFill,
-                      {
-                        width: `${Math.round((doneCount / total) * 100)}%`,
-                        backgroundColor: '#10B981',
-                      },
-                    ]}
-                  />
-                </View>
-                <ThemedText style={styles.progressText}>
-                  {Math.round((doneCount / total) * 100)}%
-                </ThemedText>
-              </>
+            {currentPhase ? (
+              <ThemedText style={styles.modalSubtitle}>
+                {currentPhase}
+              </ThemedText>
+            ) : (
+              <ThemedText style={styles.modalSubtitle}>
+                Processing schedules...
+              </ThemedText>
+            )}
+            {uniquePlantsCount > 0 && (
+              <ThemedText style={[styles.modalSubtitle, { fontSize: 12, opacity: 0.6, marginTop: 8 }]}>
+                {uniquePlantsCount} {uniquePlantsCount === 1 ? 'plant' : 'plants'} total
+              </ThemedText>
             )}
           </View>
         </View>

@@ -17,6 +17,7 @@ type Plant = {
   systemType?: 'normal' | 'reservoir' | null;
   scheduleSameYearRound?: boolean | null;
   waterDelay?: number | null;
+  hasActivePest?: boolean;
 };
 
 function FavoritePlantCard({
@@ -158,7 +159,7 @@ function FavoritePlantCard({
             
             {/* Icons and lineage row */}
             <View style={styles.iconsRow}>
-              <View style={styles.lineageChip}>
+              <View style={[styles.lineageChip, plant.hasActivePest && styles.lineageChipPest]}>
                 <Text style={styles.lineageText}>{lineageDisplay}</Text>
               </View>
               {/* Seasonal/Year-round icon */}
@@ -200,6 +201,7 @@ export default memo(FavoritePlantCard, (prevProps, nextProps) => {
     prevProps.plant.systemType === nextProps.plant.systemType &&
     prevProps.plant.scheduleSameYearRound === nextProps.plant.scheduleSameYearRound &&
     prevProps.plant.waterDelay === nextProps.plant.waterDelay &&
+    prevProps.plant.hasActivePest === nextProps.plant.hasActivePest &&
     prevProps.size === nextProps.size &&
     prevProps.shouldLoadImage === nextProps.shouldLoadImage &&
     prevProps.isSelected === nextProps.isSelected
@@ -270,6 +272,9 @@ const styles = StyleSheet.create({
     minWidth: 18, // Reduced from 20
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  lineageChipPest: {
+    backgroundColor: 'rgba(239, 68, 68, 0.9)', // Red translucent for active pest
   },
   lineageText: {
     color: '#ffffff',

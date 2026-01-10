@@ -108,7 +108,6 @@ export async function savePlantsRow<T extends Record<string, any>>(id: string, p
     return null;
   }
 
-  console.log(`${NS} savePlantsRow(${id}) WRITE`, clean);
 
   const { data, error, count } = await supabase
     .from('plants')

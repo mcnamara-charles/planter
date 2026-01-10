@@ -49,6 +49,7 @@ const MAPPING: Record<string, IconDescriptor> = {
   'person.circle': { lib: 'material', name: 'person' },
   plus: { lib: 'material', name: 'add' },
   'plus.circle': { lib: 'material', name: 'add-circle' },
+  'plus.circle.fill': { lib: 'material', name: 'add-circle' },
   // Account & settings icons
   gearshape: { lib: 'material', name: 'settings' },
   bell: { lib: 'material', name: 'notifications' },
@@ -102,6 +103,11 @@ const MAPPING: Record<string, IconDescriptor> = {
   // ---- Timeline view icons ----
   calendar: { lib: 'material', name: 'calendar-today' }, // calendar icon
   timeline: { lib: 'material', name: 'timeline' }, // timeline icon
+  pest: { lib: 'material', name: 'bug-report' }, // pest/treatment icon
+  'exclamationmark.triangle.fill': { lib: 'material', name: 'warning' }, // filled warning triangle
+  
+  // ---- Positioning/arrangement icon ----
+  position: { lib: 'material', name: 'view-comfy' }, // grid/layout icon for plant positioning
 };
 
 // Drive the public prop name from the keys of our mapping

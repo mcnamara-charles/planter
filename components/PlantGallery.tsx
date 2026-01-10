@@ -141,7 +141,7 @@ const PlantListItem = memo(({
         </View>
         <View style={styles.listItemContent}>
           <View style={styles.listItemNameRow}>
-            <View style={styles.lineageChip}>
+            <View style={[styles.lineageChip, item.hasActivePest && styles.lineageChipPest]}>
               {item.lightType === 'grow_light' && (
                 <IconSymbol name="light.grow" size={10} color="#fff" style={{ marginRight: 2 }} />
               )}
@@ -168,6 +168,7 @@ const PlantListItem = memo(({
     prevProps.item.lineage === nextProps.item.lineage &&
     prevProps.item.lightType === nextProps.item.lightType &&
     prevProps.item.systemType === nextProps.item.systemType &&
+    prevProps.item.hasActivePest === nextProps.item.hasActivePest &&
     prevProps.viewMode === nextProps.viewMode &&
     prevProps.gridSize === nextProps.gridSize &&
     prevProps.index === nextProps.index &&
@@ -829,6 +830,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  lineageChipPest: {
+    backgroundColor: 'rgba(239, 68, 68, 0.8)', // Red translucent for active pest
   },
   lineageText: {
     color: '#ffffff',

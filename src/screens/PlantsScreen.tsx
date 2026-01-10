@@ -1,6 +1,6 @@
 import { Image } from 'expo-image';
 import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { StyleSheet, View, TouchableOpacity, RefreshControl, TextInput, ActivityIndicator, Pressable, ScrollView, Platform } from 'react-native';
+import { Alert, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import FavoritePlantCard from '@/components/favorite-plant-card';
@@ -16,6 +16,8 @@ import MoveModal from '@/components/MoveModal';
 import UpdateLightModal from '@/components/UpdateLightModal';
 import UpdateTypeModal from '@/components/UpdateTypeModal';
 import { usePlantImageCache } from '@/context/PlantImageCacheContext';
+import PestIdModal from '@/components/PestIdModal';
+import PestTreatModal from '@/components/PestTreatModal';
 
 // Module-level variable to persist plant ID across component remounts
 let lastSelectedPlantId: string | null = null;
@@ -61,6 +63,9 @@ export default function PlantsScreen() {
   const [moveModalOpen, setMoveModalOpen] = useState(false);
   const [lightModalOpen, setLightModalOpen] = useState(false);
   const [typeModalOpen, setTypeModalOpen] = useState(false);
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+  const [pestIdModalOpen, setPestIdModalOpen] = useState(false);
+  const [pestTreatModalOpen, setPestTreatModalOpen] = useState(false);
   const [clearSelectionTrigger, setClearSelectionTrigger] = useState(0);
   const scrollViewRef = useRef<ScrollView>(null);
   const lastSelectedPlantIdRef = useRef<string | null>(null);
@@ -223,6 +228,26 @@ export default function PlantsScreen() {
         }
       }
 
+      // Fetch active pest_id events for all plants
+      const plantIds = rows.map((r) => String(r.id));
+      const { data: pestEvents } = await supabase
+        .from('user_plant_timeline_events')
+        .select('user_plant_id, event_data')
+        .in('user_plant_id', plantIds)
+        .eq('event_type', 'pest_id')
+        .order('event_time', { ascending: false });
+
+      // Create a set of plant IDs with active pest events
+      const plantsWithActivePest = new Set<string>();
+      if (pestEvents) {
+        for (const event of pestEvents) {
+          const eventData = event.event_data as any;
+          if (eventData?.status === 'active' && !plantsWithActivePest.has(event.user_plant_id)) {
+            plantsWithActivePest.add(event.user_plant_id);
+          }
+        }
+      }
+
       // Map to UI model with cached images
       const mappedPromises = rows.map(async (row) => {
         const ref = row.plants ?? ({} as UserPlantJoined['plants']);
@@ -268,6 +293,7 @@ export default function PlantsScreen() {
           systemType: (row as any).system_type || undefined,
           scheduleSameYearRound: (ref as any)?.schedule_same_year_round ?? undefined,
           waterDelay: (row as any).water_delay ?? undefined,
+          hasActivePest: plantsWithActivePest.has(String(row.id)),
         };
       });
 
@@ -449,7 +475,12 @@ export default function PlantsScreen() {
               <ThemedText style={styles.selectionToolbarClear}>Clear</ThemedText>
             </Pressable>
           </View>
-          <View style={styles.selectionToolbarActions}>
+          <ScrollView 
+            horizontal 
+            showsHorizontalScrollIndicator={false}
+            style={styles.selectionToolbarActionsScroll}
+            contentContainerStyle={styles.selectionToolbarActions}
+          >
             <Pressable
               style={styles.selectionToolbarButton}
               onPress={() => {
@@ -486,7 +517,15 @@ export default function PlantsScreen() {
               <IconSymbol name="arrow.right" size={20} color={theme.colors.text} />
               <ThemedText style={styles.selectionToolbarButtonLabel}>Move</ThemedText>
             </Pressable>
-          </View>
+            <Pressable
+              style={styles.selectionToolbarButton}
+              onPress={() => setMoreMenuOpen(true)}
+              disabled={selectedPlantIds.length === 0}
+            >
+              <IconSymbol name="ellipsis" size={20} color={theme.colors.text} />
+              <ThemedText style={styles.selectionToolbarButtonLabel}>More</ThemedText>
+            </Pressable>
+          </ScrollView>
         </View>
       )}
       <ScrollView
@@ -601,6 +640,54 @@ export default function PlantsScreen() {
           fetchPlants(false);
         }}
       />
+      {moreMenuOpen && (
+        <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
+          <Pressable style={StyleSheet.absoluteFill} onPress={() => setMoreMenuOpen(false)} />
+          <View style={[styles.moreMenu, { backgroundColor: theme.colors.card, borderColor: theme.colors.border }]}>
+            <TouchableOpacity
+              style={styles.moreMenuItem}
+              onPress={() => {
+                setMoreMenuOpen(false);
+                setPestIdModalOpen(true);
+              }}
+            >
+              <IconSymbol name="pest" size={18} color={theme.colors.text} />
+              <ThemedText style={{ marginLeft: 8, fontWeight: '700' }}>Pest ID</ThemedText>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.moreMenuItem}
+              onPress={() => {
+                setMoreMenuOpen(false);
+                setPestTreatModalOpen(true);
+              }}
+            >
+              <IconSymbol name="pest" size={18} color={theme.colors.text} />
+              <ThemedText style={{ marginLeft: 8, fontWeight: '700' }}>Treat Plant</ThemedText>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
+      <PestIdModal
+        open={pestIdModalOpen}
+        onClose={() => setPestIdModalOpen(false)}
+        userPlantIds={selectedPlantIds}
+        onSaved={() => {
+          setPestIdModalOpen(false);
+          setSelectedPlantIds([]);
+          setClearSelectionTrigger((v) => v + 1);
+        }}
+      />
+      <PestTreatModal
+        open={pestTreatModalOpen}
+        onClose={() => setPestTreatModalOpen(false)}
+        userPlantIds={selectedPlantIds}
+        onSaved={() => {
+          setPestTreatModalOpen(false);
+          setSelectedPlantIds([]);
+          setClearSelectionTrigger((v) => v + 1);
+        }}
+      />
     </View>
   );
 }
@@ -644,7 +731,7 @@ const styles = StyleSheet.create({
     elevation: 10,
   },
   selectionToolbarText: {
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: '700',
   },
   selectionToolbarClear: {
@@ -653,9 +740,13 @@ const styles = StyleSheet.create({
     color: '#3B82F6',
     marginTop: 4,
   },
+  selectionToolbarActionsScroll: {
+    flex: 1,
+  },
   selectionToolbarActions: {
     flexDirection: 'row',
     gap: 8,
+    paddingRight: 8,
   },
   selectionToolbarButton: {
     flexDirection: 'column',
@@ -663,10 +754,10 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 4,
     paddingVertical: 6,
-    paddingHorizontal: 4,
+    paddingHorizontal: 8,
     borderRadius: 10,
     borderWidth: 0,
-    width: 88,
+    width: 70,
   },
   selectionToolbarButtonLabel: {
     fontSize: 12,
@@ -694,5 +785,33 @@ const styles = StyleSheet.create({
     fontSize: 28,
     lineHeight: 30,
     fontWeight: '700',
+  },
+  moreMenu: {
+    position: 'absolute',
+    top: 90,
+    right: 16,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 8,
+    gap: 6,
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOpacity: 0.12,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 3 },
+  },
+  moreMenuItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+    borderRadius: 8,
+  },
+  overlayCloseBtn: {
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
   },
 });

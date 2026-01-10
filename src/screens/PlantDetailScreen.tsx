@@ -32,6 +32,8 @@ import PotDetailsModal from '@/components/PotDetailsModal';
 import TaxonomyModal from '@/components/TaxonomyModal';
 import { ButtonPill } from '@/components/Buttons';
 import PlantDataGenerationModal from '@/components/PlantDataGenerationModal';
+import PestIdModal from '@/components/PestIdModal';
+import PestTreatModal from '@/components/PestTreatModal';
 
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { labelAvailability, labelRarity } from '@/utils/labels';
@@ -101,6 +103,8 @@ export default function PlantDetailScreen() {
     water: false,
     fertilize: false,
     prune: false,
+    pest: false,
+    pestTreat: false,
     location: false,
     taxonomy: false,
     soil: false,
@@ -205,6 +209,7 @@ export default function PlantDetailScreen() {
         if (modals.water) { setModals((m) => ({ ...m, water: false })); return true; }
         if (modals.fertilize) { setModals((m) => ({ ...m, fertilize: false })); return true; }
         if (modals.prune) { setModals((m) => ({ ...m, prune: false })); return true; }
+        if (modals.pestTreat) { setModals((m) => ({ ...m, pestTreat: false })); return true; }
         if (modals.location) { setModals((m) => ({ ...m, location: false })); return true; }
         if (modals.soil) { setModals((m) => ({ ...m, soil: false })); return true; }
         if (modals.pot) { setModals((m) => ({ ...m, pot: false })); return true; }
@@ -666,6 +671,8 @@ export default function PlantDetailScreen() {
                   onFertilize={() => setModals((m) => ({ ...m, fertilize: true }))}
                   onPrune={() => setModals((m) => ({ ...m, prune: true }))}
                   onObserve={() => (nav as any).navigate('Observe', { id })}
+                  onIdentifyPest={() => setModals((m) => ({ ...m, pest: true }))}
+                  onTreatPest={() => setModals((m) => ({ ...m, pestTreat: true }))}
                   optimisticCare={optimisticCare}
                 />
               </Section>
@@ -908,6 +915,18 @@ export default function PlantDetailScreen() {
       <WaterModal open={modals.water} onClose={() => setModals((m) => ({ ...m, water: false }))} userPlantIds={[id]} onSaved={() => setUi((u) => ({ ...u, timelineKey: u.timelineKey + 1 }))} />
       <FertilizeModal open={modals.fertilize} onClose={() => setModals((m) => ({ ...m, fertilize: false }))} userPlantIds={[id]} onSaved={() => setUi((u) => ({ ...u, timelineKey: u.timelineKey + 1 }))} />
       <PruneModal open={modals.prune} onClose={() => setModals((m) => ({ ...m, prune: false }))} userPlantId={id} onSaved={() => setUi((u) => ({ ...u, timelineKey: u.timelineKey + 1 }))} />
+      <PestIdModal
+        open={modals.pest}
+        onClose={() => setModals((m) => ({ ...m, pest: false }))}
+        userPlantIds={[id]}
+        onSaved={() => setUi((u) => ({ ...u, timelineKey: u.timelineKey + 1 }))}
+      />
+      <PestTreatModal
+        open={modals.pestTreat}
+        onClose={() => setModals((m) => ({ ...m, pestTreat: false }))}
+        userPlantIds={[id]}
+        onSaved={() => setUi((u) => ({ ...u, timelineKey: u.timelineKey + 1 }))}
+      />
       <ConfirmNameModal
         open={(modals as any).confirmName?.open}
         suggested={(modals as any).confirmName?.suggested ?? null}
@@ -1018,5 +1037,11 @@ const styles = StyleSheet.create({
   progressBar: {
     height: '100%',
     borderRadius: 8,
+  },
+  overlayCloseBtn: {
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
   },
 });
