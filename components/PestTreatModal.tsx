@@ -73,9 +73,17 @@ export default function PestTreatModal({ open, userPlantIds, onClose, onSaved }:
 
       for (const [userPlantId, pestEvent] of mostRecentEvents.entries()) {
         const eventData = pestEvent.event_data;
-        const currentCompleted = eventData.treatments_completed || 0;
-        const totalTreatments = eventData.treatments_total || 0;
+        // Ensure we parse the number correctly - handle both string and number types
+        const currentCompleted = typeof eventData.treatments_completed === 'number' 
+          ? eventData.treatments_completed 
+          : parseInt(String(eventData.treatments_completed || '0'), 10) || 0;
+        const totalTreatments = typeof eventData.treatments_total === 'number'
+          ? eventData.treatments_total
+          : parseInt(String(eventData.treatments_total || '0'), 10) || 0;
         const newCompleted = currentCompleted + 1;
+        
+        // Format the current date as YYYY-MM-DD for last_treatment_date
+        const todayDateStr = now.toISOString().slice(0, 10);
 
         // Create treatment event
         treatmentRows.push({
@@ -90,10 +98,12 @@ export default function PestTreatModal({ open, userPlantIds, onClose, onSaved }:
           note: null,
         });
 
-        // Update the pest_id event
+        // Update the pest_id event - increment treatments_completed and update last_treatment_date
+        // Preserve all existing event_data fields and update the specific ones we need
         const updatedEventData = {
           ...eventData,
           treatments_completed: newCompleted,
+          last_treatment_date: todayDateStr,
           status: newCompleted >= totalTreatments ? 'completed' : 'active',
         };
 
@@ -102,17 +112,26 @@ export default function PestTreatModal({ open, userPlantIds, onClose, onSaved }:
             .from('user_plant_timeline_events')
             .update({ event_data: updatedEventData })
             .eq('id', pestEvent.id)
+            .then((result) => {
+              if (result.error) {
+                console.error('[PestTreatModal] Failed to update pest_id event:', pestEvent.id, result.error);
+                throw result.error;
+              }
+              console.log('[PestTreatModal] Successfully updated pest_id event:', pestEvent.id, 'treatments_completed:', newCompleted);
+              return result;
+            })
         );
       }
 
-      // Insert treatment events
+      // Insert treatment events first
       if (treatmentRows.length > 0) {
         const { error: insertError } = await supabase.from('user_plant_timeline_events').insert(treatmentRows);
         if (insertError) throw insertError;
       }
 
-      // Update pest_id events
-      await Promise.all(updatePromises);
+      // Then update pest_id events
+      const updateResults = await Promise.all(updatePromises);
+      console.log('[PestTreatModal] Updated', updateResults.length, 'pest_id events');
 
       onClose();
       onSaved?.();

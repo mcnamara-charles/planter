@@ -32,7 +32,7 @@ export function useDashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Fetch most recent observe events for each plant and count sick ones
+  // Fetch active pest_id events and count plants with active pests
   const fetchSickPlantsCount = useCallback(async () => {
     if (!user?.id) return;
     
@@ -52,34 +52,27 @@ export function useDashboard() {
       
       const plantIds = userPlants.map(p => p.id);
       
-      // Get the most recent observe event for each plant
-      const { data: recentObserveEvents, error: eventsError } = await supabase
+      // Get all pest_id events for these plants
+      const { data: pestEvents, error: eventsError } = await supabase
         .from('user_plant_timeline_events')
         .select('user_plant_id, event_data')
-        .eq('event_type', 'observe')
+        .eq('event_type', 'pest_id')
         .in('user_plant_id', plantIds)
         .order('event_time', { ascending: false });
       
       if (eventsError) throw eventsError;
       
-      // Group by plant_id and get the most recent for each
-      const mostRecentByPlant = new Map();
-      recentObserveEvents?.forEach(event => {
-        if (!mostRecentByPlant.has(event.user_plant_id)) {
-          mostRecentByPlant.set(event.user_plant_id, event);
+      // Group by plant_id and find plants with active pest events
+      const plantsWithActivePest = new Set<string>();
+      pestEvents?.forEach(event => {
+        const eventData = event.event_data as any;
+        // Check if this is an active pest_id event (status === 'active' and not completed)
+        if (eventData?.status === 'active' && !plantsWithActivePest.has(event.user_plant_id)) {
+          plantsWithActivePest.add(event.user_plant_id);
         }
       });
       
-      // Count plants with is_healthy: false
-      let sickCount = 0;
-      mostRecentByPlant.forEach(event => {
-        const healthData = event.event_data?.health;
-        if (healthData && healthData.is_healthy === false) {
-          sickCount++;
-        }
-      });
-      
-      setSickPlantsCount(sickCount);
+      setSickPlantsCount(plantsWithActivePest.size);
       
     } catch (error) {
       console.error('Error fetching sick plants count:', error);

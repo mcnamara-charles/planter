@@ -5,6 +5,7 @@ export type Plant = {
   imageUri: string;
   location?: string;
   genus?: string;
+  speciesTaxonId?: string | null;
   lineage?: string | null;
   lightType?: 'grow_light' | 'sunlight' | null;
   systemType?: 'normal' | 'reservoir' | null;

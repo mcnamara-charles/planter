@@ -110,7 +110,8 @@ export default function PlantsScreen() {
             plant_name,
             plant_scientific_name,
             genus,
-            schedule_same_year_round
+            schedule_same_year_round,
+            species_taxon_id
           ),
           location:location_id (
             id,
@@ -228,6 +229,141 @@ export default function PlantsScreen() {
         }
       }
 
+      // Asynchronously populate missing genus values (non-blocking - runs in background)
+      // This way the UI loads immediately and genus gets populated in the background
+      const plantsNeedingGenus = rows.filter(row => {
+        const ref = row.plants;
+        return ref && !ref.genus && ref.plant_scientific_name;
+      });
+
+      if (plantsNeedingGenus.length > 0) {
+        // Run this in the background - don't await it, so UI loads immediately
+        (async () => {
+          try {
+            // Helper to extract first word from scientific name as fallback genus
+            const extractGenusFromScientificName = (scientificName: string): string | null => {
+              if (!scientificName) return null;
+              const trimmed = scientificName.trim();
+              const firstWord = trimmed.split(/\s+/)[0];
+              return firstWord || null;
+            };
+
+            // Get unique species_taxon_ids to reduce queries
+            const plantTaxonMap = new Map<string, { plantIds: string[]; scientificName: string }>(); // taxonId -> { plantIds, scientificName }
+            const plantsWithoutTaxon: { plantId: string; scientificName: string }[] = [];
+            
+            for (const row of plantsNeedingGenus) {
+              const ref = row.plants as any;
+              const speciesTaxonId = ref?.species_taxon_id;
+              const plantId = ref?.id;
+              const scientificName = ref?.plant_scientific_name || '';
+              
+              if (plantId && scientificName) {
+                if (speciesTaxonId) {
+                  if (!plantTaxonMap.has(speciesTaxonId)) {
+                    plantTaxonMap.set(speciesTaxonId, { plantIds: [], scientificName });
+                  }
+                  plantTaxonMap.get(speciesTaxonId)!.plantIds.push(plantId);
+                } else {
+                  // No taxon ID - will use scientific name fallback
+                  plantsWithoutTaxon.push({ plantId, scientificName });
+                }
+              }
+            }
+
+            // Fetch genera for all unique taxon IDs using parallel queries (one per taxon)
+            const genusPromises = Array.from(plantTaxonMap.keys()).map(async (taxonId) => {
+              try {
+                let currentTaxonId: string | null = taxonId;
+                let depth = 0;
+                const maxDepth = 15;
+                
+                type TaxonRow = { id: string; name: string; type: string | null; parent_id: string | null };
+                while (currentTaxonId && depth < maxDepth) {
+                  const response: { data: TaxonRow | null; error: any } = await supabase
+                    .from('taxa')
+                    .select('id, name, type, parent_id')
+                    .eq('id', currentTaxonId)
+                    .maybeSingle();
+                  
+                  if (response.error || !response.data) break;
+                  
+                  const taxonData = response.data;
+                  if (taxonData.type?.toLowerCase() === 'genus') {
+                    return { taxonId, genus: taxonData.name };
+                  }
+                  
+                  currentTaxonId = taxonData.parent_id;
+                  depth++;
+                }
+              } catch (err) {
+                console.error('[PlantsScreen] Error fetching genus for taxon:', taxonId, err);
+              }
+              return null;
+            });
+
+            const results = await Promise.all(genusPromises);
+            
+            // Build updates list
+            const genusUpdates: { plantId: string; genus: string }[] = [];
+            const plantsWithGenusFromTaxonomy = new Set<string>();
+            
+            // Add genus from taxonomy lookup results
+            for (const result of results) {
+              if (result?.genus) {
+                const plantData = plantTaxonMap.get(result.taxonId);
+                if (plantData) {
+                  for (const plantId of plantData.plantIds) {
+                    genusUpdates.push({ plantId, genus: result.genus });
+                    plantsWithGenusFromTaxonomy.add(plantId);
+                  }
+                }
+              }
+            }
+            
+            // For plants where taxonomy lookup failed or no taxon ID, use scientific name fallback
+            for (const row of plantsNeedingGenus) {
+              const ref = row.plants as any;
+              const plantId = ref?.id;
+              const scientificName = ref?.plant_scientific_name || '';
+              
+              // Skip if we already got genus from taxonomy lookup
+              if (plantsWithGenusFromTaxonomy.has(plantId)) continue;
+              
+              // Use scientific name fallback: extract first word
+              const genusFromName = extractGenusFromScientificName(scientificName);
+              if (genusFromName) {
+                genusUpdates.push({ plantId, genus: genusFromName });
+              }
+            }
+
+            // Batch update plants in groups (Supabase handles batching better this way)
+            if (genusUpdates.length > 0) {
+              const updateBatchSize = 50;
+              for (let i = 0; i < genusUpdates.length; i += updateBatchSize) {
+                const batch = genusUpdates.slice(i, i + updateBatchSize);
+                const updatePromises = batch.map(({ plantId, genus }) =>
+                  supabase
+                    .from('plants')
+                    .update({ genus })
+                    .eq('id', plantId)
+                );
+                
+                const updateResults = await Promise.all(updatePromises);
+                const errors = updateResults.filter(r => r.error);
+                if (errors.length > 0) {
+                  console.error('[PlantsScreen] Some genus updates failed:', errors.length);
+                }
+              }
+              
+              console.log(`[PlantsScreen] Updated ${genusUpdates.length} plants with genus values (background)`);
+            }
+          } catch (err) {
+            console.error('[PlantsScreen] Error in background genus update:', err);
+          }
+        })();
+      }
+
       // Fetch active pest_id events for all plants
       const plantIds = rows.map((r) => String(r.id));
       const { data: pestEvents } = await supabase
@@ -288,6 +424,7 @@ export default function PlantsScreen() {
           imageUri,
           location: row.location?.name,
           genus: ref?.genus || undefined,
+          speciesTaxonId: (ref as any)?.species_taxon_id || undefined,
           lineage: (row as any).lineage || undefined,
           lightType: (row as any).light_type || undefined,
           systemType: (row as any).system_type || undefined,

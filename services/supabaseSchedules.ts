@@ -818,22 +818,51 @@ export async function updatePestTreatSchedule(userPlantId: string): Promise<any>
 
 /** Fetch user_plant_ids that have pest events and need pest_treat schedule updates. */
 export async function fetchUserPlantIdsNeedingPestScheduleUpdate(): Promise<string[]> {
-  // Get all plants that have pest_id or pest_treat events
-  const { data: pestEvents, error } = await supabase
-    .from('user_plant_timeline_events')
-    .select('user_plant_id')
-    .in('event_type', ['pest_id', 'pest_treat'])
-    .order('event_time', { ascending: false });
+  const allIds = await fetchAllUserPlantIds();
+  if (allIds.length === 0) return [];
 
-  if (error) throw error;
+  // Get pest_treat schedules and their updated_at times
+  const schedulesMap = await fetchSchedulesUpdatedAtMap('pest_treat', allIds);
 
-  // Get unique plant IDs
-  const plantIdsWithPests = Array.from(new Set((pestEvents || []).map((e: any) => e.user_plant_id))).filter(Boolean);
+  // Get latest pest_id and pest_treat events for all plants
+  const pestIdEventsMap = await fetchLatestEventsPerPlantRPC(allIds, ['pest_id']);
+  const pestTreatEventsMap = await fetchLatestEventsPerPlantRPC(allIds, ['pest_treat']);
+
+  const needsRebuild: string[] = [];
   
-  // Also include plants with overdue pest_treat schedules
-  const overduePest = await fetchOverdueUserPlantIdsByType('pest_treat');
-  
-  return Array.from(new Set([...plantIdsWithPests, ...overduePest]));
+  for (const userPlantId of allIds) {
+    const pestIdEvent = pestIdEventsMap.get(userPlantId);
+    const pestTreatEvent = pestTreatEventsMap.get(userPlantId);
+    const scheduleUpdated = schedulesMap.get(userPlantId);
+    
+    // Check if this plant has an active pest_id event
+    const eventData = pestIdEvent?.event_data as any;
+    const hasActivePest = eventData?.status === 'active';
+    
+    if (hasActivePest) {
+      // Plant has an active pest - needs a pest_treat schedule
+      // Find the most recent relevant event (pest_id or pest_treat)
+      let latestEventTime: string | null = null;
+      if (pestTreatEvent && pestIdEvent) {
+        latestEventTime = pestTreatEvent.event_time > pestIdEvent.event_time 
+          ? pestTreatEvent.event_time 
+          : pestIdEvent.event_time;
+      } else if (pestTreatEvent) {
+        latestEventTime = pestTreatEvent.event_time;
+      } else if (pestIdEvent) {
+        latestEventTime = pestIdEvent.event_time;
+      }
+      
+      // If no schedule exists, or the latest relevant event is newer than the schedule, rebuild
+      if (!scheduleUpdated || (latestEventTime && new Date(latestEventTime) > new Date(scheduleUpdated))) {
+        needsRebuild.push(userPlantId);
+      }
+    }
+    // Note: Plants with schedules but no active pest will have their schedules deleted
+    // during the rebuild process, but we don't need to trigger a rebuild just for deletion
+  }
+
+  return needsRebuild;
 }
 
 /** Fetch latest effective watering event (water or fertilize for reservoir plants). */

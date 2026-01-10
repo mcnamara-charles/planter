@@ -236,18 +236,18 @@ export default function PlantGallery({
     }
   }, [effectiveGridSize]);
   
-
   // Helper function to get grouping key for plants
-  const getGroupKey = (plant: Plant): string => {
+  const getGroupKey = useCallback((plant: Plant): string => {
     switch (groupBy) {
       case 'location':
         return plant.location || 'No Location';
       case 'genus':
+        // Use the genus column directly (now populated from taxonomy in PlantsScreen)
         return plant.genus || 'Unknown Genus';
       default:
         return '';
     }
-  };
+  }, [groupBy]);
 
   // Group plants based on current groupBy setting
   const groupedPlants = useMemo(() => {
@@ -301,7 +301,7 @@ export default function PlantGallery({
     }
 
     return finalSorted;
-  }, [plants, groupBy]);
+  }, [plants, groupBy, getGroupKey]);
 
   const selectedPlantIdList = useMemo(
     () => Object.keys(selectedPlantIds),

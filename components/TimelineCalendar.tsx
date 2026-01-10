@@ -343,40 +343,59 @@ export default function TimelineCalendar({ eventType, userPlantId }: TimelineCal
     const fetchSelectedDayEvents = async () => {
       try {
         setLoadingSelectedEvents(true);
-        // Parse the date string (YYYY-MM-DD) and create date range in local timezone
-        const [year, month, day] = selectedDate.split('-').map(Number);
-        const startOfDay = new Date(year, month - 1, day, 0, 0, 0, 0);
-        const endOfDay = new Date(year, month - 1, day, 23, 59, 59, 999);
-
-        // Fetch events for the selected day
-        // Query a wider range to account for timezone differences, then filter by local date
+        // Parse the date string (YYYY-MM-DD)
         const dateStr = selectedDate; // Already in YYYY-MM-DD format
+
+        // Query for ALL events for this plant to catch any that might not be in the initial fetch
+        // (e.g., pest_id events with event_time on a different day than their display date)
+        // Use pagination to handle cases where there are more than 1000 events
+        let allEvents: any[] = [];
+        let hasMore = true;
+        let page = 0;
+        const pageSize = 1000;
         
-        // Create a wider query range (from previous day 00:00 UTC to next day 23:59 UTC)
-        // This ensures we capture all events that might appear on the selected day in any timezone
-        const queryStart = new Date(year, month - 1, day - 1, 0, 0, 0, 0);
-        const queryEnd = new Date(year, month - 1, day + 1, 23, 59, 59, 999);
-        
-        const { data: eventsData, error: eventsError } = await supabase
-          .from('user_plant_timeline_events')
-          .select('*')
-          .eq('user_plant_id', userPlantId)
-          .gte('event_time', queryStart.toISOString())
-          .lte('event_time', queryEnd.toISOString())
-          .order('event_time', { ascending: false });
-        
-        // Filter events to match the selected date in local timezone
-        // This ensures we get events that show on the correct day regardless of UTC offset
-        const filteredEvents = (eventsData || []).filter((event) => {
-          const eventDate = new Date(event.event_time);
-          const eventDateKey = d3TimeFormat.timeFormat('%Y-%m-%d')(eventDate);
+        while (hasMore) {
+          const { data: eventsPage, error: eventsError } = await supabase
+            .from('user_plant_timeline_events')
+            .select('*')
+            .eq('user_plant_id', userPlantId)
+            .order('event_time', { ascending: false })
+            .range(page * pageSize, (page + 1) * pageSize - 1);
+          
+          if (eventsError) throw eventsError;
+          
+          allEvents = [...allEvents, ...(eventsPage || [])];
+          hasMore = (eventsPage || []).length === pageSize;
+          page++;
+          
+          // Safety limit to prevent infinite loops
+          if (page > 10) break;
+        }
+
+        // Filter events to match the selected date based on their display date
+        // For pest_id events, use last_treatment_date if available (matching the calendar grouping logic)
+        // For all other events, use event_time
+        // This MUST match exactly the logic used in eventsByDate grouping (lines 320-327)
+        const filteredEvents = allEvents.filter((event) => {
+          // For pest_id events, use last_treatment_date if available, otherwise use event_time
+          // This matches the exact logic in eventsByDate grouping
+          let eventDate = event.event_time;
+          if (event.event_type === 'pest_id' && event.event_data?.last_treatment_date) {
+            eventDate = event.event_data.last_treatment_date;
+          }
+          
+          const date = new Date(eventDate);
+          if (isNaN(date.getTime())) {
+            return false;
+          }
+          
+          // Use the same date formatting as eventsByDate grouping
+          const eventDateKey = d3TimeFormat.timeFormat('%Y-%m-%d')(date);
           return eventDateKey === dateStr;
         });
 
-        if (eventsError) throw eventsError;
-
-        // Fetch photos for these events
-        const eventIds = (eventsData || []).map((e) => e.id);
+        // Fetch photos for the filtered events only
+        const eventIds = filteredEvents.map((e) => e.id);
         let photos: EventPhoto[] = [];
         if (eventIds.length > 0) {
           const { data: links, error: linksError } = await supabase

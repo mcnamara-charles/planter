@@ -76,7 +76,7 @@ function SickPlantListItem({
         <View style={styles.warningContainer}>
           <IconSymbol name="exclamationmark.triangle" size={14} color="#ef4444" />
           <ThemedText style={styles.warningText} numberOfLines={1}>
-            {plant.problem || 'Health issue detected'}
+            {plant.problem || 'Pest issue detected'}
           </ThemedText>
         </View>
       </View>
@@ -95,7 +95,7 @@ export default function SickPlantsScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Fetch plants that are currently sick
+  // Fetch plants that have active pest_id events
   const fetchSickPlants = useCallback(async () => {
     if (!user?.id) return;
     
@@ -118,33 +118,31 @@ export default function SickPlantsScreen() {
       
       const userPlantIds = userPlants.map(p => p.id);
       
-      // Get the most recent observe event for each plant
-      const { data: recentObserveEvents, error: eventsError } = await supabase
+      // Get all pest_id events for these plants
+      const { data: pestEvents, error: eventsError } = await supabase
         .from('user_plant_timeline_events')
         .select('user_plant_id, event_data')
-        .eq('event_type', 'observe')
+        .eq('event_type', 'pest_id')
         .in('user_plant_id', userPlantIds)
         .order('event_time', { ascending: false });
       
       if (eventsError) throw eventsError;
       
-      // Group by plant_id and get the most recent for each
-      const mostRecentByPlant = new Map();
-      recentObserveEvents?.forEach(event => {
-        if (!mostRecentByPlant.has(event.user_plant_id)) {
-          mostRecentByPlant.set(event.user_plant_id, event);
-        }
-      });
-      
-      // Filter to only sick plants and collect problem data
+      // Group by plant_id and find plants with active pest events
       const sickPlantIds: string[] = [];
       const plantProblems: Record<string, string> = {};
-      mostRecentByPlant.forEach(event => {
-        const healthData = event.event_data?.health;
-        if (healthData && healthData.is_healthy === false) {
+      const processedPlants = new Set<string>();
+      
+      pestEvents?.forEach(event => {
+        const eventData = event.event_data as any;
+        // Check if this is an active pest_id event (status === 'active' and not already processed)
+        if (eventData?.status === 'active' && !processedPlants.has(event.user_plant_id)) {
+          processedPlants.add(event.user_plant_id);
           sickPlantIds.push(event.user_plant_id);
-          // Collect the problem description
-          const problem = healthData.damage_desc || 'Health issue detected';
+          // Collect the pest type as the problem description
+          const pestType = eventData?.pest_type || 'Pest detected';
+          const severity = eventData?.severity ? ` (${eventData.severity})` : '';
+          const problem = `${pestType}${severity}`;
           plantProblems[event.user_plant_id] = problem;
         }
       });
@@ -232,7 +230,7 @@ export default function SickPlantsScreen() {
           name: displayName,
           scientificName: sci,
           imageUri: photo,
-          problem: plantProblems[String(row.id)] || 'Health issue detected',
+          problem: plantProblems[String(row.id)] || 'Pest issue detected',
         };
       });
 
