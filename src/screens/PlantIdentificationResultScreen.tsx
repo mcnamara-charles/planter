@@ -425,14 +425,15 @@ export default function PlantIdentificationResultScreen() {
           .maybeSingle(),
       ]);
 
+      if (careResult.error) throw careResult.error;
+      if (marketResult.error) throw marketResult.error;
+
       const plantData = {
         ...coreData,
         ...careResult.data,
         ...marketResult.data,
       };
-  
-      if (plantErr) throw plantErr;
-  
+
       if (plantData) {
         setPlant((p) => ({
           ...p,
