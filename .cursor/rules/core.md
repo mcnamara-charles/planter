@@ -1,0 +1,6 @@
+- Prefer minimal diffs.
+- Preserve existing architecture and patterns unless explicitly told otherwise.
+- Do not edit generated files.
+- Do not broaden scope beyond the requested task.
+- When changing behavior, identify all likely affected files first.
+- When uncertain, ask for or create a plan before implementation.

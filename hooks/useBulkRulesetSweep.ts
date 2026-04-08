@@ -154,6 +154,44 @@ function computePlan(row: PlantRow): SweepItem {
   };
 }
 
+/** Helper to merge data from all microtables */
+async function fetchAndMergePlantRows(coreIds: string[]): Promise<PlantRow[]> {
+  if (coreIds.length === 0) return [];
+  
+  // Fetch from all tables in parallel
+  const [coreResult, careResult, marketResult, scheduleResult] = await Promise.all([
+    supabase
+      .from('plants_core')
+      .select('id, description, plant_name, data_response_version, owner_id')
+      .in('id', coreIds),
+    supabase
+      .from('plants_care')
+      .select('plant_id, care_light, care_water, care_temp_humidity, care_fertilizer, care_pruning, soil_description, propagation_methods_json')
+      .in('plant_id', coreIds),
+    supabase
+      .from('plants_market_meta')
+      .select('plant_id, availability, rarity')
+      .in('plant_id', coreIds),
+    supabase
+      .from('plants_schedule')
+      .select('plant_id, schedule_same_year_round, active_season_start_date, active_season_end_date, water_interval_days_active, water_interval_days_inactive, fert_interval_days_active, fert_interval_days_inactive')
+      .in('plant_id', coreIds),
+  ]);
+
+  // Create maps for efficient lookup
+  const careMap = new Map((careResult.data || []).map(c => [c.plant_id, c]));
+  const marketMap = new Map((marketResult.data || []).map(m => [m.plant_id, m]));
+  const scheduleMap = new Map((scheduleResult.data || []).map(s => [s.plant_id, s]));
+
+  // Merge data
+  return (coreResult.data || []).map(core => ({
+    ...core,
+    ...(careMap.get(core.id) || {}),
+    ...(marketMap.get(core.id) || {}),
+    ...(scheduleMap.get(core.id) || {}),
+  })) as PlantRow[];
+}
+
 /** Fetch candidates by ruleset (null or < CURRENT_RULESET_VERSION) with logging */
 async function fetchCandidatesByRuleset(opts: { ownerId?: string; ids?: string[]; chunkSize?: number }, runId: string) {
   const t0 = nowMs();
@@ -165,15 +203,13 @@ async function fetchCandidatesByRuleset(opts: { ownerId?: string; ids?: string[]
     const out: PlantRow[] = [];
     for (let i = 0; i < ids.length; i += chunkSize) {
       const slice = ids.slice(i, i + chunkSize);
-      let q = supabase.from('plants').select(REQUIRED_SELECT).in('id', slice);
-      if (ownerId) q = q.eq('owner_id', ownerId as any);
       const tBatch = nowMs();
-      const { data, error } = await q;
-      if (error) {
+      try {
+        const merged = await fetchAndMergePlantRows(slice);
+        console.log(`${NS} [${runId}] fetched chunk (offset=${i}, size=${slice.length}) -> rows=${merged.length} in ${durMs(tBatch)}`);
+        out.push(...merged);
+      } catch (error) {
         console.warn(`${NS} [${runId}] fetch chunk error (offset=${i}, size=${slice.length}):`, error);
-      } else {
-        console.log(`${NS} [${runId}] fetched chunk (offset=${i}, size=${slice.length}) -> rows=${(data as PlantRow[] | null)?.length ?? 0} in ${durMs(tBatch)}`);
-        out.push(...(data as PlantRow[]));
       }
     }
     console.log(`${NS} [${runId}] fetch by IDs complete, total rows=${out.length} in ${durMs(t0)}`);
@@ -186,14 +222,16 @@ async function fetchCandidatesByRuleset(opts: { ownerId?: string; ids?: string[]
   // null version
   {
     const tNull = nowMs();
-    let q = supabase.from('plants').select(REQUIRED_SELECT).is('data_response_version', null);
+    let q = supabase.from('plants_core').select('id').is('data_response_version', null);
     if (ownerId) q = q.eq('owner_id', ownerId as any);
-    const { data, error } = await q;
+    const { data: coreIds, error } = await q;
     if (error) {
       console.warn(`${NS} [${runId}] fetch null-version error:`, error);
     } else {
-      console.log(`${NS} [${runId}] fetched null-version rows=${(data as PlantRow[] | null)?.length ?? 0} in ${durMs(tNull)}`);
-      if (data) out.push(...(data as PlantRow[]));
+      const ids = (coreIds || []).map((r: any) => r.id);
+      const merged = await fetchAndMergePlantRows(ids);
+      console.log(`${NS} [${runId}] fetched null-version rows=${merged.length} in ${durMs(tNull)}`);
+      out.push(...merged);
     }
   }
 
@@ -201,16 +239,18 @@ async function fetchCandidatesByRuleset(opts: { ownerId?: string; ids?: string[]
   {
     const tLt = nowMs();
     let q = supabase
-      .from('plants')
-      .select(REQUIRED_SELECT)
+      .from('plants_core')
+      .select('id')
       .lt('data_response_version', CURRENT_RULESET_VERSION);
     if (ownerId) q = q.eq('owner_id', ownerId as any);
-    const { data, error } = await q;
+    const { data: coreIds, error } = await q;
     if (error) {
       console.warn(`${NS} [${runId}] fetch lt-version error:`, error);
     } else {
-      console.log(`${NS} [${runId}] fetched lt-version rows=${(data as PlantRow[] | null)?.length ?? 0} in ${durMs(tLt)}`);
-      if (data) out.push(...(data as PlantRow[]));
+      const ids = (coreIds || []).map((r: any) => r.id);
+      const merged = await fetchAndMergePlantRows(ids);
+      console.log(`${NS} [${runId}] fetched lt-version rows=${merged.length} in ${durMs(tLt)}`);
+      out.push(...merged);
     }
   }
 

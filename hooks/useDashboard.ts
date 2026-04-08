@@ -41,7 +41,9 @@ export function useDashboard() {
       const { data: userPlants, error: plantsError } = await supabase
         .from('user_plants')
         .select('id')
-        .eq('owner_id', user.id);
+        .eq('owner_id', user.id)
+        .is('sold_at', null) // Exclude sold plants
+        .is('deceased_at', null); // Exclude deceased plants
       
       if (plantsError) throw plantsError;
       
@@ -89,7 +91,9 @@ export function useDashboard() {
       const { data: userPlants, error: plantsError } = await supabase
         .from('user_plants')
         .select('id, plants_table_id, nickname, default_plant_photo_id')
-        .eq('owner_id', user.id);
+        .eq('owner_id', user.id)
+        .is('sold_at', null) // Exclude sold plants
+        .is('deceased_at', null); // Exclude deceased plants
       
       if (plantsError) throw plantsError;
       
@@ -157,7 +161,7 @@ export function useDashboard() {
       let plantsById: Record<string, any> = {};
       if (inspectionPlantIds.length > 0) {
         const { data: plantRows, error: pErr } = await supabase
-          .from('plants')
+          .from('plants_core')
           .select('id, plant_name, plant_scientific_name')
           .in('id', inspectionPlantIds);
         if (pErr) throw pErr;
@@ -259,7 +263,7 @@ export function useDashboard() {
       let plantsById: Record<string, any> = {};
       if (plantIds.length > 0) {
         const { data: plantRows, error: pErr } = await supabase
-          .from('plants')
+          .from('plants_core')
           .select('id, plant_name, plant_scientific_name')
           .in('id', plantIds);
         if (pErr) throw pErr;

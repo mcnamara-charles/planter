@@ -35,17 +35,21 @@ function FavoritePlantCard({
   shouldLoadImage?: boolean; // Only load image when component is visible
   isSelected?: boolean;
 }) {
-  // Show skeleton only if we actually expect an image
+  // Show skeleton only if we actually expect an image and are in viewport
   const [imgLoading, setImgLoading] = useState(Boolean(plant.imageUri && shouldLoadImage));
   const [imgError, setImgError] = useState(false);
   
-  // Track if image has ever been rendered to prevent derendering during layout changes
-  // (e.g., when multiselect toolbar appears and shifts layout)
-  const [hasRenderedImage, setHasRenderedImage] = useState(false);
+  // Reset loading state when shouldLoadImage changes
+  useEffect(() => {
+    if (shouldLoadImage && plant.imageUri) {
+      setImgLoading(true);
+      setImgError(false);
+    }
+  }, [shouldLoadImage, plant.imageUri]);
   
-  // Once image is loaded, keep it rendered even if temporarily out of viewport
-  // This prevents flickering during layout changes (like multiselect toolbar)
-  const shouldRenderImage = shouldLoadImage || hasRenderedImage;
+  // Only render image when in viewport - derender when out of viewport for performance
+  // Since images are cached, they'll load quickly when scrolled back into view
+  const shouldRenderImage = shouldLoadImage;
 
   // A tiny cache-buster if you want to avoid stale signed URLs (optional)
   // For medium grid, request lower resolution to reduce lag
@@ -98,7 +102,7 @@ function FavoritePlantCard({
   // Get lineage display value (default to "A" if empty)
   const lineageDisplay = plant.lineage?.trim() || 'A';
 
-  // Portrait layout with overlay card at bottom
+  // Portrait layout with info card below image
   return (
     <Pressable 
       style={styles.card} 
@@ -108,11 +112,11 @@ function FavoritePlantCard({
     >
       {/* Media - Portrait format */}
       <View style={styles.media}>
-        {/* Skeleton while the image loads */}
-        {imgLoading && <SkeletonTile style={styles.mediaSkeleton} rounded={12} />}
+        {/* Only show skeleton if we're actually going to load the image */}
+        {shouldLoadImage && imgLoading && <SkeletonTile style={styles.mediaSkeleton} rounded={12} />}
 
-        {/* Image (if present) */}
-        {imgSource && !imgError ? (
+        {/* Image (if present) - only render when in viewport */}
+        {shouldLoadImage && imgSource && !imgError ? (
           <Image
             source={imgSource}
             style={styles.mediaImg}
@@ -126,17 +130,16 @@ function FavoritePlantCard({
             onLoadStart={() => setImgLoading(true)}
             onLoad={() => {
               setImgLoading(false);
-              setHasRenderedImage(true); // Mark as rendered so it stays mounted
             }}
             onError={() => {
               setImgLoading(false);
               setImgError(true);
             }}
           />
-        ) : (
+        ) : shouldLoadImage && !imgSource && !imgError ? (
           // Fallback if there's no image or it failed
           <View style={styles.mediaFallback} />
-        )}
+        ) : null}
         
         {/* Selection overlay */}
         {isSelected && (
@@ -148,39 +151,39 @@ function FavoritePlantCard({
             />
           </View>
         )}
+      </View>
 
-        {/* Overlay card at bottom with plant info */}
-        <View style={styles.overlayCard}>
-          <View style={styles.overlayContent}>
-            {/* Nickname */}
-            <ThemedText style={[styles.nickname, getTitleStyle()]} numberOfLines={1}>
-              {plant.name || 'Unnamed Plant'}
-            </ThemedText>
-            
-            {/* Icons and lineage row */}
-            <View style={styles.iconsRow}>
-              <View style={[styles.lineageChip, plant.hasActivePest && styles.lineageChipPest]}>
-                <Text style={styles.lineageText}>{lineageDisplay}</Text>
-              </View>
-              {/* Seasonal/Year-round icon */}
-              {typeof plant.scheduleSameYearRound === 'boolean' && (
-                <IconSymbol 
-                  name={plant.scheduleSameYearRound ? 'plant' : 'flower'} 
-                  size={12} 
-                  color="#fff" 
-                  style={{ marginLeft: 6 }} 
-                />
-              )}
-              {plant.lightType === 'grow_light' && (
-                <IconSymbol name="light.grow" size={12} color="#fff" style={{ marginLeft: 6 }} />
-              )}
-              {plant.systemType === 'reservoir' && (
-                <IconSymbol name="drop" size={12} color="#fff" style={{ marginLeft: 6 }} />
-              )}
-              {plant.waterDelay !== null && plant.waterDelay !== undefined && (
-                <IconSymbol name="clock" size={12} color="#3B82F6" style={{ marginLeft: 6 }} />
-              )}
+      {/* Info card below image with plant info */}
+      <View style={styles.overlayCard}>
+        <View style={styles.overlayContent}>
+          {/* Nickname */}
+          <ThemedText style={[styles.nickname, getTitleStyle()]} numberOfLines={1}>
+            {plant.name || 'Unnamed Plant'}
+          </ThemedText>
+          
+          {/* Icons and lineage row */}
+          <View style={styles.iconsRow}>
+            <View style={[styles.lineageChip, plant.hasActivePest && styles.lineageChipPest]}>
+              <Text style={[styles.lineageText, plant.hasActivePest && styles.lineageTextPest]}>{lineageDisplay}</Text>
             </View>
+            {/* Seasonal/Year-round icon */}
+            {typeof plant.scheduleSameYearRound === 'boolean' && (
+              <IconSymbol 
+                name={plant.scheduleSameYearRound ? 'plant' : 'flower'} 
+                size={12} 
+                color="#fff" 
+                style={{ marginLeft: 6 }} 
+              />
+            )}
+            {plant.lightType === 'grow_light' && (
+              <IconSymbol name="light.grow" size={12} color="#fff" style={{ marginLeft: 6 }} />
+            )}
+            {plant.systemType === 'reservoir' && (
+              <IconSymbol name="drop" size={12} color="#fff" style={{ marginLeft: 6 }} />
+            )}
+            {plant.waterDelay !== null && plant.waterDelay !== undefined && (
+              <IconSymbol name="clock" size={12} color="#3B82F6" style={{ marginLeft: 6 }} />
+            )}
           </View>
         </View>
       </View>
@@ -217,8 +220,9 @@ const styles = StyleSheet.create({
   media: {
     position: 'relative',
     width: '100%',
-    aspectRatio: 0.75, // Portrait format (3:4 ratio)
-    borderRadius: 12,
+    aspectRatio: 0.9, // Shorter portrait format
+    borderTopLeftRadius: 12,
+    borderTopRightRadius: 12,
     overflow: 'hidden',
     backgroundColor: 'rgba(120,120,120,0.12)',
   },
@@ -239,18 +243,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     zIndex: 2,
-    borderRadius: 12,
+    borderTopLeftRadius: 12,
+    borderTopRightRadius: 12,
   },
   overlayCard: {
-    position: 'absolute',
-    bottom: 6, // Reduced from 8
-    left: 6, // Reduced from 8
-    right: 6, // Reduced from 8
-    backgroundColor: '#000000', // Solid black background
-    borderRadius: 8,
+    backgroundColor: '#6B8E23', // Olive green background
+    borderBottomLeftRadius: 12,
+    borderBottomRightRadius: 12,
     paddingHorizontal: 8,
     paddingTop: 6,
     paddingBottom: 8,
+    marginTop: 0,
   },
   overlayContent: {
     flexDirection: 'column',
@@ -265,22 +268,25 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   lineageChip: {
-    backgroundColor: 'rgba(10, 132, 255, 0.9)', // Blue translucent
-    paddingHorizontal: 5, // Reduced from 6
-    paddingVertical: 2,
-    borderRadius: 6,
-    minWidth: 18, // Reduced from 20
+    backgroundColor: '#FFFFFF', // White background (matches TopBar)
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    borderRadius: 8,
+    minWidth: 20,
     alignItems: 'center',
     justifyContent: 'center',
   },
   lineageChipPest: {
-    backgroundColor: 'rgba(239, 68, 68, 0.9)', // Red translucent for active pest
+    backgroundColor: '#EF4444', // Red background for active pest
   },
   lineageText: {
-    color: '#ffffff',
-    fontSize: 9, // Reduced from 10
+    color: '#000000', // Black text (matches TopBar)
+    fontSize: 10,
     fontWeight: '600',
-    lineHeight: 11, // Reduced from 12
+    lineHeight: 12,
+  },
+  lineageTextPest: {
+    color: '#FFFFFF', // White text when infected
   },
   title: {
     fontWeight: '700',

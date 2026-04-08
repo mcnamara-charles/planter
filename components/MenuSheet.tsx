@@ -7,10 +7,16 @@ export default function MenuSheet({
   onEdit,
   onDelete,
   onSetDeceased,
+  onMarkSold,
+  isDeceased = false,
+  isSold = false,
 }: {
   onEdit: () => void;
   onDelete: () => void;
   onSetDeceased?: () => void;
+  onMarkSold?: () => void;
+  isDeceased?: boolean;
+  isSold?: boolean;
 }) {
   const { theme } = useTheme();
   return (
@@ -18,9 +24,14 @@ export default function MenuSheet({
       <TouchableOpacity style={styles.menuItem} onPress={onEdit}>
         <ThemedText>Edit details</ThemedText>
       </TouchableOpacity>
-      {onSetDeceased && (
+      {onMarkSold && !isDeceased && (
+        <TouchableOpacity style={styles.menuItem} onPress={onMarkSold}>
+          <ThemedText>{isSold ? 'Not sold' : 'Mark Sold'}</ThemedText>
+        </TouchableOpacity>
+      )}
+      {onSetDeceased && !isSold && (
         <TouchableOpacity style={styles.menuItem} onPress={onSetDeceased}>
-          <ThemedText>Set Deceased</ThemedText>
+          <ThemedText>{isDeceased ? 'Mark Living' : 'Set Deceased'}</ThemedText>
         </TouchableOpacity>
       )}
       <TouchableOpacity style={styles.menuItem} onPress={onDelete}>

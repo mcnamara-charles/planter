@@ -8,6 +8,7 @@ type LineageIndicatorProps = {
   systemType?: 'normal' | 'reservoir' | null;
   textSize?: number;
   iconSize?: number;
+  isInfected?: boolean;
 };
 
 export default function LineageIndicator({
@@ -16,6 +17,7 @@ export default function LineageIndicator({
   systemType,
   textSize = 10,
   iconSize = 10,
+  isInfected = false,
 }: LineageIndicatorProps) {
   const lineageDisplay = lineage?.trim() || 'A';
   const hasIcons = lightType === 'grow_light' || systemType === 'reservoir';
@@ -24,22 +26,25 @@ export default function LineageIndicator({
     return null;
   }
 
+  const backgroundColor = isInfected ? '#EF4444' : '#FFFFFF';
+  const textColor = isInfected ? '#FFFFFF' : '#000000';
+  const iconColor = isInfected ? '#FFFFFF' : '#000000';
+
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor }]}>
       {lightType === 'grow_light' && (
-        <IconSymbol name="light.grow" size={iconSize} color="#fff" style={{ marginRight: 2 }} />
+        <IconSymbol name="light.grow" size={iconSize} color={iconColor} style={{ marginRight: 2 }} />
       )}
       {systemType === 'reservoir' && (
-        <IconSymbol name="drop" size={iconSize} color="#fff" style={{ marginRight: 3 }} />
+        <IconSymbol name="drop" size={iconSize} color={iconColor} style={{ marginRight: 3 }} />
       )}
-      <Text style={[styles.text, { fontSize: textSize }]}>{lineageDisplay}</Text>
+      <Text style={[styles.text, { fontSize: textSize, color: textColor }]}>{lineageDisplay}</Text>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
-    backgroundColor: 'rgba(10, 132, 255, 0.8)',
     paddingHorizontal: 6,
     paddingVertical: 3,
     borderRadius: 8,
@@ -49,7 +54,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   text: {
-    color: '#ffffff',
     fontWeight: '600',
     lineHeight: 12,
   },

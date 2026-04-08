@@ -1,5 +1,5 @@
 import React, { useMemo, useState, useCallback, memo, useRef, useEffect } from 'react';
-import { View, StyleSheet, TouchableOpacity, TextInput, FlatList, Text } from 'react-native';
+import { View, StyleSheet, TouchableOpacity, TextInput, SectionList, FlatList, Text, RefreshControl, SectionListData } from 'react-native';
 import { Image } from 'expo-image';
 
 import { ThemedText } from '@/components/themed-text';
@@ -11,7 +11,7 @@ import { useTheme } from '@/context/themeContext';
 import { type Plant } from '@/types/plant';
 
 type LayoutPreset = 'gridsmall' | 'gridmed' | 'list';
-type GroupByOption = 'none' | 'location' | 'genus';
+type GroupByOption = 'none' | 'location' | 'genus' | 'status';
 
 type PlantGalleryProps = {
   plants: Plant[];
@@ -36,7 +36,7 @@ type PlantGalleryProps = {
   defaultLayout?: LayoutPreset;    // 'gridsmall' | 'gridmed' | 'list' (default: 'gridmed')
 
   // Group By functionality
-  groupBy?: GroupByOption;         // 'none' | 'location' | 'genus' (default: 'none')
+  groupBy?: GroupByOption;         // 'none' | 'location' | 'genus' | 'status' (default: 'none')
   onGroupByChange?: (groupBy: GroupByOption) => void;
   defaultGroupBy?: GroupByOption;  // Initial group by value (default: 'none')
 
@@ -47,6 +47,9 @@ type PlantGalleryProps = {
   
   // Viewport for image rendering optimization
   viewportBounds?: { top: number; bottom: number };
+  
+  // Scroll position preservation
+  scrollPositionRef?: React.RefObject<{ getScrollOffset: () => number; scrollToOffset: (offset: number) => void } | null>;
 };
 
 // Memoized list item component to prevent unnecessary re-renders
@@ -98,7 +101,7 @@ const PlantListItem = memo(({
           plant={item}
           size={gridSize}
           onPress={handlePress}
-          onLongPress={onLongPress ? handleLongPress : undefined}
+          onLongPress={handleLongPress}
           shouldLoadImage={shouldLoadImage}
           isSelected={isSelected}
         />
@@ -110,7 +113,7 @@ const PlantListItem = memo(({
     <View style={styles.listItemContainer} onLayout={onLayout}>
       <TouchableOpacity
         onPress={handlePress}
-        onLongPress={onLongPress ? handleLongPress : undefined}
+        onLongPress={handleLongPress}
         delayLongPress={250}
         style={[styles.listItem, { borderColor: theme.colors.border, backgroundColor: theme.colors.card }]}
         activeOpacity={0.7}
@@ -199,7 +202,7 @@ export default function PlantGallery({
   defaultGroupBy = 'none',
   onSelectionChange,
   clearSelectionTrigger,
-  viewportBounds = { top: 0, bottom: 0 },
+  scrollPositionRef,
 }: PlantGalleryProps) {
   const { theme } = useTheme();
 
@@ -214,13 +217,29 @@ export default function PlantGallery({
   const [selectedPlantIds, setSelectedPlantIds] = useState<Record<string, boolean>>({});
   const selectionModeRef = useRef(false);
   
-  // Track item positions for viewport-based rendering
-  const itemPositionsRef = useRef<Map<string, { top: number; bottom: number }>>(new Map());
-  const containerOffsetRef = useRef<number>(0);
+  // No longer need viewport tracking - VirtualizedLists handle this internally
 
   // When toggles are hidden, force the layout defined by defaultLayout
   const effectiveViewMode = enableViewToggle ? viewMode : initialView;
   const effectiveGridSize = enableViewToggle ? gridSize : initialSize;
+  
+  // Refs for scroll position preservation
+  const flatListRef = useRef<FlatList>(null);
+  const sectionListRef = useRef<SectionList<Plant, { title: string; data: Plant[] }>>(null);
+  const scrollOffsetRef = useRef<number>(0);
+  
+  // Expose scroll position methods to parent
+  React.useImperativeHandle(scrollPositionRef, () => ({
+    getScrollOffset: () => scrollOffsetRef.current,
+    scrollToOffset: (offset: number) => {
+      scrollOffsetRef.current = offset;
+      if (effectiveViewMode === 'grid' && flatListRef.current) {
+        flatListRef.current.scrollToOffset({ offset, animated: false });
+      } else if (effectiveViewMode === 'list' && sectionListRef.current) {
+        sectionListRef.current.scrollToLocation({ sectionIndex: 0, itemIndex: 0, viewOffset: offset });
+      }
+    },
+  }), [effectiveViewMode]);
 
   const getCardContainerStyle = useCallback(() => {
     switch (effectiveGridSize) {
@@ -244,37 +263,63 @@ export default function PlantGallery({
       case 'genus':
         // Use the genus column directly (now populated from taxonomy in PlantsScreen)
         return plant.genus || 'Unknown Genus';
+      case 'status': {
+        if (plant.deceasedAt) return 'Deceased';
+        if (plant.soldAt) return 'Sold';
+        return 'Active';
+      }
       default:
         return '';
     }
   }, [groupBy]);
 
-  // Group plants based on current groupBy setting
-  const groupedPlants = useMemo(() => {
+  // Convert grouped plants to SectionList format for virtualization
+  const sections = useMemo(() => {
     if (!plants || plants.length === 0) {
-      return {};
+      return [];
     }
     
+    let groups: Record<string, Plant[]>;
+    
     if (groupBy === 'none') {
-      const result = { '': plants };
-      return result;
-    }
-
-    const groups: Record<string, Plant[]> = {};
-    // Use for loop instead of forEach for better performance
-    for (let i = 0; i < plants.length; i++) {
-      const plant = plants[i];
-      const key = getGroupKey(plant);
-      if (!groups[key]) {
-        groups[key] = [];
+      groups = { '': plants };
+    } else {
+      groups = {};
+      // Use for loop instead of forEach for better performance
+      for (let i = 0; i < plants.length; i++) {
+        const plant = plants[i];
+        // When grouping by status, filter out active plants
+        if (groupBy === 'status') {
+          if (!plant.deceasedAt && !plant.soldAt) {
+            continue; // Skip active plants
+          }
+        }
+        const key = getGroupKey(plant);
+        if (!groups[key]) {
+          groups[key] = [];
+        }
+        groups[key].push(plant);
       }
-      groups[key].push(plant);
     }
 
-    // Sort groups alphabetically, but put "No Location" and "Unknown Genus" at the bottom
+    // Sort groups
     const sortedGroups: Record<string, Plant[]> = {};
-    const fallbackKeys = ['No Location', 'Unknown Genus'];
     const groupKeys = Object.keys(groups);
+
+    // Special ordering for status groups (only Sold and Deceased, no Active)
+    if (groupBy === 'status') {
+      const ordered = ['Sold', 'Deceased'];
+      const finalSorted: Record<string, Plant[]> = {};
+
+      for (const k of ordered) {
+        if (groups[k]) finalSorted[k] = groups[k];
+      }
+
+      return Object.entries(finalSorted).map(([title, data]) => ({ title, data }));
+    }
+
+    // Default: Sort alphabetically, but put fallbacks at the bottom
+    const fallbackKeys = ['No Location', 'Unknown Genus'];
     
     // First, add all non-fallback groups in alphabetical order
     for (let i = 0; i < groupKeys.length; i++) {
@@ -300,8 +345,21 @@ export default function PlantGallery({
       }
     }
 
-    return finalSorted;
+    // Convert to SectionList format
+    return Object.entries(finalSorted).map(([title, data]) => ({
+      title,
+      data,
+    }));
   }, [plants, groupBy, getGroupKey]);
+  
+  // Keep groupedPlants for backward compatibility (used in globalIndices)
+  const groupedPlants = useMemo(() => {
+    const result: Record<string, Plant[]> = {};
+    for (const section of sections) {
+      result[section.title] = section.data;
+    }
+    return result;
+  }, [sections]);
 
   const selectedPlantIdList = useMemo(
     () => Object.keys(selectedPlantIds),
@@ -366,130 +424,110 @@ export default function PlantGallery({
     return indices;
   }, [groupedPlants]);
 
-  // Helper to check if item is in viewport (with buffer for smoother scrolling)
-  // Must be defined at top level, not inside useMemo
-  // On medium grid: max 6 items on screen (2 columns, 3 rows)
-  // On small grid: max ~9 items on screen (3 columns, ~3 rows)
-  const isItemInViewport = useCallback((itemId: string) => {
-    const position = itemPositionsRef.current.get(itemId);
-    
-    // If viewport hasn't been measured yet (still at 0,0), render first items
-    // Render more items initially for small grid (3 columns) vs medium (2 columns)
-    if (viewportBounds.top === 0 && viewportBounds.bottom === 0) {
-      // For initial render, be more conservative - render first batch
-      // This will be refined once viewport is measured
-      return true;
-    }
-    
-    // If position not yet measured, default to true (will be measured on layout)
-    if (!position) return true;
-    
-    // Calculate buffer based on grid size and estimated item height
-    // Medium: 6 items max = ~3 rows, Small: ~9 items max = ~3 rows
-    // Estimate item height: portrait aspect ratio 0.75, so if width is ~48% or 31%, 
-    // height would be roughly 1.33x width. For a typical screen, estimate ~200-250px per item
-    // Buffer should be ~2-3 rows worth to preload ahead/behind
-    const estimatedItemHeight = effectiveGridSize === 'small' ? 200 : 250;
-    const buffer = estimatedItemHeight * 2.5; // ~2.5 rows buffer for smooth scrolling
-    
-    const adjustedViewportTop = viewportBounds.top - buffer;
-    const adjustedViewportBottom = viewportBounds.bottom + buffer;
-    
-    // Item is in viewport if it overlaps with the adjusted viewport
-    return !(position.bottom < adjustedViewportTop || position.top > adjustedViewportBottom);
-  }, [viewportBounds, effectiveGridSize]);
+  // Render functions for SectionList
+  // With SectionList, items are only rendered when visible (virtualization handles this)
+  // So we can always load images for rendered items
+  const renderSectionHeader = useCallback((info: { section: SectionListData<Plant, { title: string; data: Plant[] }> }) => {
+    const section = info.section as { title: string; data: Plant[] };
+    if (!section.title) return null;
+    // Find section index to determine if it's the first section
+    const sectionIndex = sections.findIndex(s => s.title === section.title && s.data === section.data);
+    const isFirstSection = sectionIndex === 0;
+    return (
+      <View style={[styles.groupTitleContainer, isFirstSection && { marginTop: 0 }]}>
+        <ThemedText style={styles.groupTitle}>{section.title}</ThemedText>
+        <ThemedText style={[styles.groupCount, { color: theme.colors.primary }]}>
+          {' '}({section.data.length})
+        </ThemedText>
+      </View>
+    );
+  }, [theme.colors.primary, sections]);
 
-  const listContent = useMemo(() => {
-    if (loading) {
+  const renderItem = useCallback(({ item }: { item: Plant }) => {
+    const globalIndex = globalIndices.get(item.id) ?? 0;
+    const cardContainerStyle = getCardContainerStyle();
+    
+    return (
+      <PlantListItem
+        item={item}
+        viewMode={effectiveViewMode}
+        gridSize={effectiveGridSize}
+        cardStyle={effectiveViewMode === 'grid' ? cardContainerStyle : undefined}
+        onPress={handleItemPress}
+        onLongPress={handleItemLongPress}
+        theme={theme}
+        index={globalIndex}
+        totalItems={plants?.length ?? 0}
+        isSelected={selectedPlantIds[item.id] === true}
+        shouldLoadImage={true} // VirtualizedLists only render visible items, so always load
+      />
+    );
+  }, [effectiveViewMode, effectiveGridSize, getCardContainerStyle, handleItemPress, handleItemLongPress, theme, globalIndices, plants?.length, selectedPlantIds]);
+
+  // For grid mode, we need to render items in rows manually since headers need to span full width
+  // Flatten sections into rows: each section becomes [header, ...items in rows]
+  const gridData = useMemo(() => {
+    if (effectiveViewMode !== 'grid') return [];
+    const numCols = effectiveGridSize === 'small' ? 3 : 2;
+    const rows: Array<{ type: 'header' | 'row'; title?: string; data?: Plant[]; sectionIndex?: number; items?: Plant[] }> = [];
+    
+    sections.forEach((section, sectionIndex) => {
+      // Add header
+      if (section.title) {
+        rows.push({ type: 'header', title: section.title, data: section.data, sectionIndex });
+      }
+      // Add items in rows
+      for (let i = 0; i < section.data.length; i += numCols) {
+        rows.push({ type: 'row', items: section.data.slice(i, i + numCols), sectionIndex });
+      }
+    });
+    return rows;
+  }, [sections, effectiveViewMode, effectiveGridSize]);
+
+  // Renderer for grid mode with manual row layout
+  const renderGridItem = useCallback(({ item: rowItem, index: flatIndex }: { item: { type: 'header' | 'row'; title?: string; data?: Plant[]; sectionIndex?: number; items?: Plant[] }; index: number }) => {
+    if (rowItem.type === 'header') {
+      // Headers span full width - first header has no top margin
+      const isFirstHeader = flatIndex === 0;
       return (
-        <View style={effectiveViewMode === 'grid' ? styles.grid : styles.list}>
-          {Array.from({ length: 6 }).map((_, i) => (
-            <View key={`sk-${i}`} style={effectiveViewMode === 'grid' ? getCardContainerStyle() : styles.listItemContainer}>
-              {effectiveViewMode === 'grid' ? (
-                <>
-                  <SkeletonTile style={{ aspectRatio: 1, width: '100%' }} />
-                  <View style={{ height: 8 }} />
-                  <SkeletonTile style={{ height: 16, width: '70%' }} rounded={6} />
-                  <View style={{ height: 6 }} />
-                  <SkeletonTile style={{ height: 14, width: '50%' }} rounded={6} />
-                </>
-              ) : (
-                <View style={styles.listItemSkeleton}>
-                  <SkeletonTile style={{ width: 60, height: 60, borderRadius: 8 }} />
-                  <View style={{ flex: 1, marginLeft: 12 }}>
-                    <SkeletonTile style={{ height: 16, width: '70%', marginBottom: 6 }} rounded={6} />
-                    <SkeletonTile style={{ height: 14, width: '50%' }} rounded={6} />
-                  </View>
-                </View>
-              )}
-            </View>
-          ))}
+        <View style={{ width: '100%', marginTop: isFirstHeader ? 0 : 24, marginBottom: 8 }}>
+          {renderSectionHeader({ section: { title: rowItem.title || '', data: rowItem.data || [] } })}
         </View>
       );
     }
-
-    if (error) return <ThemedText>{error}</ThemedText>;
-    if (!plants || plants.length === 0) return <ThemedText>No plants yet.</ThemedText>;
-
+    // Render row of items
     const cardContainerStyle = getCardContainerStyle();
-
-    // Render grouped content
     return (
-      <View 
-        removeClippedSubviews={true}
-        onLayout={(event) => {
-          const { y } = event.nativeEvent.layout;
-          containerOffsetRef.current = y;
-        }}
-      >
-        {Object.entries(groupedPlants).map(([groupKey, groupPlants]) => {
-          // Safety check for groupPlants
-          if (!groupPlants || !Array.isArray(groupPlants)) {
-            return null;
-          }
-          
+      <View style={{ flexDirection: 'row', gap: 8, marginBottom: 8 }}>
+        {rowItem.items!.map((plant) => {
+          const globalIndex = globalIndices.get(plant.id) ?? 0;
           return (
-          <View key={groupKey} style={styles.groupSection} removeClippedSubviews={true}>
-            {groupKey && (
-              <ThemedText style={styles.groupTitle}>{groupKey}</ThemedText>
-            )}
-            <View style={effectiveViewMode === 'grid' ? styles.grid : styles.list}>
-              {groupPlants.map((item) => {
-                const globalIndex = globalIndices.get(item.id) ?? 0;
-                const shouldLoadImage = isItemInViewport(item.id);
-                
-                return (
-                  <PlantListItem
-                    key={item.id}
-                    item={item}
-                    viewMode={effectiveViewMode}
-                    gridSize={effectiveGridSize}
-                    cardStyle={effectiveViewMode === 'grid' ? cardContainerStyle : undefined}
-                    onPress={handleItemPress}
-                    onLongPress={handleItemLongPress}
-                    theme={theme}
-                    index={globalIndex}
-                    totalItems={plants?.length ?? 0}
-                    isSelected={selectedPlantIds[item.id] === true}
-                    shouldLoadImage={shouldLoadImage}
-                    onLayout={(event) => {
-                      const { y, height } = event.nativeEvent.layout;
-                      const pageY = y + containerOffsetRef.current;
-                      itemPositionsRef.current.set(item.id, {
-                        top: pageY,
-                        bottom: pageY + height,
-                      });
-                    }}
-                  />
-                );
-              })}
-            </View>
-          </View>
+            <PlantListItem
+              key={plant.id}
+              item={plant}
+              viewMode="grid"
+              gridSize={effectiveGridSize}
+              cardStyle={cardContainerStyle}
+              onPress={handleItemPress}
+              onLongPress={handleItemLongPress}
+              theme={theme}
+              index={globalIndex}
+              totalItems={plants?.length ?? 0}
+              isSelected={selectedPlantIds[plant.id] === true}
+              shouldLoadImage={true}
+            />
           );
         })}
+        {/* Fill remaining columns with empty views to maintain spacing */}
+        {Array.from({ length: (effectiveGridSize === 'small' ? 3 : 2) - rowItem.items!.length }).map((_, i) => (
+          <View key={`empty-${i}`} style={cardContainerStyle} />
+        ))}
       </View>
     );
-  }, [plants, loading, error, effectiveViewMode, effectiveGridSize, groupedPlants, handleItemPress, handleItemLongPress, theme, getCardContainerStyle, globalIndices, selectedPlantIds, isItemInViewport, viewportBounds]);
+  }, [effectiveGridSize, getCardContainerStyle, handleItemPress, handleItemLongPress, theme, globalIndices, plants?.length, selectedPlantIds, renderSectionHeader]);
+
+  const keyExtractor = useCallback((item: Plant) => item.id, []);
+
 
   // Notify parent when selection changes
   useEffect(() => {
@@ -511,7 +549,7 @@ export default function PlantGallery({
   return (
     <View>
       {/* Header row: Group By + Toggle buttons */}
-      <ThemedView style={styles.titleContainer}>
+      <View style={styles.titleContainer}>
         {/* Group By Dropdown */}
         <View style={styles.groupByContainer}>
           <TouchableOpacity
@@ -521,7 +559,7 @@ export default function PlantGallery({
             accessibilityLabel="Group by selector"
           >
             <ThemedText style={styles.groupByLabel}>
-              Group By: {groupBy === 'none' ? 'No Group' : groupBy === 'location' ? 'By Location' : 'By Genus'}
+              Group By: {groupBy === 'none' ? 'No Group' : groupBy === 'location' ? 'By Location' : groupBy === 'genus' ? 'By Genus' : 'By Status'}
             </ThemedText>
             <IconSymbol name="chevron.down" size={16} color={theme.colors.mutedText} />
           </TouchableOpacity>
@@ -554,6 +592,15 @@ export default function PlantGallery({
                 }}
               >
                 <ThemedText style={styles.groupByDropdownText}>By Genus</ThemedText>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.groupByDropdownItem}
+                onPress={() => {
+                  onGroupByChange?.('status');
+                  setGroupByDropdownOpen(false);
+                }}
+              >
+                <ThemedText style={styles.groupByDropdownText}>By Status</ThemedText>
               </TouchableOpacity>
             </View>
           )}
@@ -614,7 +661,7 @@ export default function PlantGallery({
             </TouchableOpacity>
           </View>
         )}
-      </ThemedView>
+      </View>
 
       {/* Size dropdown */}
       {enableViewToggle && sizeDropdownOpen && (
@@ -658,10 +705,88 @@ export default function PlantGallery({
         </View>
       )}
 
-      {/* Content */}
-      <View style={styles.contentWrapper}>
-        {listContent}
-      </View>
+      {/* Content - Use SectionList for virtualization */}
+      {loading ? (
+        <View style={[effectiveViewMode === 'grid' ? styles.grid : styles.list, { paddingHorizontal: 20 }]}>
+          {Array.from({ length: 6 }).map((_, i) => (
+            <View key={`sk-${i}`} style={effectiveViewMode === 'grid' ? getCardContainerStyle() : styles.listItemContainer}>
+              {effectiveViewMode === 'grid' ? (
+                <>
+                  <SkeletonTile style={{ aspectRatio: 1, width: '100%' }} />
+                  <View style={{ height: 8 }} />
+                  <SkeletonTile style={{ height: 16, width: '70%' }} rounded={6} />
+                  <View style={{ height: 6 }} />
+                  <SkeletonTile style={{ height: 14, width: '50%' }} rounded={6} />
+                </>
+              ) : (
+                <View style={styles.listItemSkeleton}>
+                  <SkeletonTile style={{ width: 60, height: 60, borderRadius: 8 }} />
+                  <View style={{ flex: 1, marginLeft: 12 }}>
+                    <SkeletonTile style={{ height: 16, width: '70%', marginBottom: 6 }} rounded={6} />
+                    <SkeletonTile style={{ height: 14, width: '50%' }} rounded={6} />
+                  </View>
+                </View>
+              )}
+            </View>
+          ))}
+        </View>
+      ) : error ? (
+        <ThemedText style={{ paddingHorizontal: 20 }}>{error}</ThemedText>
+      ) : !plants || plants.length === 0 ? (
+        <ThemedText style={{ paddingHorizontal: 20 }}>No plants yet.</ThemedText>
+      ) : effectiveViewMode === 'grid' ? (
+          // For grid, use FlatList with numColumns (SectionList doesn't support it)
+          // Headers span full width, items use numColumns
+          <FlatList
+            ref={flatListRef}
+            data={gridData}
+            renderItem={renderGridItem}
+            keyExtractor={(item: { type: 'header' | 'row'; sectionIndex?: number; items?: Plant[]; title?: string }, index: number) => 
+              item.type === 'header' ? `header-${item.sectionIndex}` : `row-${item.sectionIndex}-${index}`
+            }
+            key={`grid-${effectiveGridSize}`}
+            contentContainerStyle={{ padding: 20, paddingBottom: 220 }}
+            refreshControl={refreshing !== undefined && onRefresh ? (
+              <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+            ) : undefined}
+            removeClippedSubviews={true}
+            initialNumToRender={10}
+            maxToRenderPerBatch={10}
+            windowSize={5}
+            onScroll={(e) => {
+              scrollOffsetRef.current = e.nativeEvent.contentOffset.y;
+            }}
+            scrollEventThrottle={16}
+          />
+        ) : (
+          // For list, use SectionList
+          <SectionList
+            ref={sectionListRef}
+            sections={sections}
+            renderItem={renderItem}
+            renderSectionHeader={renderSectionHeader}
+            keyExtractor={keyExtractor}
+            key="list"
+            contentContainerStyle={[styles.list, { padding: 20, paddingBottom: 70 }]}
+            refreshControl={refreshing !== undefined && onRefresh ? (
+              <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+            ) : undefined}
+            removeClippedSubviews={true}
+            initialNumToRender={10}
+            maxToRenderPerBatch={10}
+            windowSize={5}
+            getItemLayout={(data, index) => {
+              // Approximate list item height
+              const itemHeight = 80;
+              return { length: itemHeight, offset: itemHeight * index, index };
+            }}
+            onScroll={(e) => {
+              scrollOffsetRef.current = e.nativeEvent.contentOffset.y;
+            }}
+            scrollEventThrottle={16}
+          />
+        )
+      }
 
       {/* Pull-to-refresh support (wrap this component in a ScrollView that uses refreshing/onRefresh) */}
       {/* Note: If you need internal <ScrollView>, you can pipe refreshing/onRefresh into it here.
@@ -676,6 +801,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: 12,
+    paddingHorizontal: 20,
   },
   groupByContainer: {
     position: 'relative',
@@ -725,8 +851,9 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   searchWrapper: {
-    marginTop: 20,               // ⬅️ new
-    marginBottom: 20,            // ⬅️ new
+    marginTop: 20,
+    marginBottom: 20,
+    paddingHorizontal: 20,
   },
   contentWrapper: {
     paddingTop: 4,              // ⬅️ new
@@ -763,7 +890,7 @@ const styles = StyleSheet.create({
   sizeDropdown: {
     position: 'absolute',
     top: 60,
-    right: 16,
+    right: 36, // 20px padding + 16px original
     zIndex: 100,
     borderRadius: 8,
     borderWidth: StyleSheet.hairlineWidth,
@@ -782,6 +909,16 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8, // Reduced from 12 to make cards wider
+  },
+  gridRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  gridRowMedium: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 8,
   },
   list: {
     gap: 8,
@@ -853,11 +990,20 @@ const styles = StyleSheet.create({
   groupSection: {
     marginBottom: 24,
   },
+  groupTitleContainer: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    marginTop: 24,
+    marginBottom: 8,
+  },
   groupTitle: {
     fontSize: 22,
     fontWeight: '700',
-    marginBottom: 16,
     opacity: 0.9,
+  },
+  groupCount: {
+    fontSize: 16,
+    fontWeight: '700',
   },
   selectionToolbar: {
     position: 'fixed',

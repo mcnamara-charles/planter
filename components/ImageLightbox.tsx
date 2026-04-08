@@ -1,10 +1,10 @@
-import React, { useCallback, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState, useEffect } from 'react';
 import { Modal, View, StyleSheet, Dimensions, FlatList, TouchableOpacity, NativeScrollEvent, NativeSyntheticEvent } from 'react-native';
 import { Image } from 'expo-image';
 import { ThemedText } from '@/components/themed-text';
 import { useTheme } from '@/context/themeContext';
 
-type LightboxImage = { uri: string; id?: string };
+type LightboxImage = { uri: string; id?: string; dateCreated?: string | null };
 
 type Props = {
   visible: boolean;
@@ -21,6 +21,13 @@ export default function ImageLightbox({ visible, images, initialIndex = 0, onClo
   const listRef = useRef<FlatList<LightboxImage> | null>(null);
 
   const data = useMemo(() => images ?? [], [images]);
+
+  // Update index when initialIndex changes (e.g., when opening from a different photo)
+  useEffect(() => {
+    if (visible) {
+      setIndex(initialIndex);
+    }
+  }, [visible, initialIndex]);
 
   const onViewableItemsChanged = useRef(({ viewableItems }: any) => {
     if (viewableItems && viewableItems.length) {
@@ -48,8 +55,9 @@ export default function ImageLightbox({ visible, images, initialIndex = 0, onClo
 
   const onModalShow = useCallback(() => {
     requestAnimationFrame(() => {
-      if (listRef.current && initialIndex > 0) {
+      if (listRef.current && initialIndex >= 0) {
         listRef.current.scrollToIndex({ index: initialIndex, animated: false });
+        setIndex(initialIndex);
       }
     });
   }, [initialIndex]);
@@ -82,10 +90,35 @@ export default function ImageLightbox({ visible, images, initialIndex = 0, onClo
             </View>
           ) : null}
         </View>
+
+        {/* Bottom date chip */}
+        {data[index]?.dateCreated && (
+          <View style={[styles.bottomBar]} pointerEvents="box-none">
+            <View style={styles.dateChip}>
+              <ThemedText style={styles.dateChipText}>
+                {formatDate(data[index]!.dateCreated!)}
+              </ThemedText>
+            </View>
+          </View>
+        )}
       </View>
     </Modal>
   );
 }
+
+const formatDate = (dateString: string | null): string => {
+  if (!dateString) return '';
+  try {
+    const date = new Date(dateString);
+    return date.toLocaleDateString('en-US', { 
+      year: 'numeric', 
+      month: 'short', 
+      day: 'numeric' 
+    });
+  } catch {
+    return '';
+  }
+};
 
 const styles = StyleSheet.create({
   topBar: {
@@ -108,6 +141,26 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: 999,
     backgroundColor: 'rgba(0,0,0,0.4)',
+  },
+  bottomBar: {
+    position: 'absolute',
+    bottom: 36,
+    left: 12,
+    right: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+  },
+  dateChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 12,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+  },
+  dateChipText: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '600',
   },
 });
 

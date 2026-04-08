@@ -17,6 +17,8 @@ export default function TopBar({
   lineage,
   lightType,
   systemType,
+  backgroundColor,
+  isInfected,
 }: {
   title: string;
   isFavorite: boolean;
@@ -29,17 +31,19 @@ export default function TopBar({
   lineage?: string | null;
   lightType?: 'grow_light' | 'sunlight' | null;
   systemType?: 'normal' | 'reservoir' | null;
+  backgroundColor?: string;
+  isInfected?: boolean;
 }) {
   const { theme } = useTheme();
   return (
-    <View style={[styles.topBar, { backgroundColor: theme.colors.card, borderBottomColor: theme.colors.border }]}>
+    <View style={[styles.topBar, { backgroundColor: backgroundColor || theme.colors.card, borderBottomColor: theme.colors.border }]}>
       <View style={styles.leftGroup}>
         <TouchableOpacity style={styles.iconBtn} accessibilityRole="button" accessibilityLabel="Go back" onPress={onBack}>
           <IconSymbol name="arrow.left" color={theme.colors.text} size={20} />
         </TouchableOpacity>
         {(lineage || lightType === 'grow_light' || systemType === 'reservoir') && (
           <View style={styles.lineageWrapper}>
-            <LineageIndicator lineage={lineage} lightType={lightType} systemType={systemType} textSize={10} iconSize={10} />
+            <LineageIndicator lineage={lineage} lightType={lightType} systemType={systemType} textSize={10} iconSize={10} isInfected={isInfected} />
           </View>
         )}
         <ThemedText style={[styles.topTitle, !hideActions && { marginRight: 15 }]} numberOfLines={1} ellipsizeMode="tail">

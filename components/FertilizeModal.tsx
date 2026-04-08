@@ -34,15 +34,22 @@ export default function FertilizeModal({
 }) {
   const { theme } = useTheme();
   const { user } = useAuth();
-  const [productName, setProductName] = useState('');
-  const [productForm, setProductForm] = useState('');
+  const [productName, setProductName] = useState('MiracleGro Liquafeed');
+  const [productForm, setProductForm] = useState('liquid');
+  const [npkOpen, setNpkOpen] = useState(false);
   const [npk, setNpk] = useState('');
-  const [method, setMethod] = useState('');
+  const [method, setMethod] = useState('Soil drench');
+  const [concentrationOpen, setConcentrationOpen] = useState(false);
   const [concentration, setConcentration] = useState('');
   const [isWatering, setIsWatering] = useState(false);
+  const [dryWeightLb, setDryWeightLb] = useState('');
+  const [wetWeightLb, setWetWeightLb] = useState('');
   const [prefillLoading, setPrefillLoading] = useState(false);
   const plantIds = userPlantIds ?? [];
   const canPrefill = plantIds.length === 1;
+  
+  const npkOptions = ['12-4-8', '12-9-6', '1-1-1'] as const;
+  const concentrationOptions = ['1/4', '1/2'] as const;
 
   const handlePrefill = useCallback(async () => {
     if (!canPrefill || !user?.id) return;
@@ -68,6 +75,8 @@ export default function FertilizeModal({
       setMethod(event?.method ?? '');
       setConcentration(event?.concentration ?? '');
       setIsWatering(!!event?.is_watering);
+      setDryWeightLb(event?.dry_weight_lb ? String(event.dry_weight_lb) : '');
+      setWetWeightLb(event?.wet_weight_lb ? String(event.wet_weight_lb) : '');
     } catch (err) {
       console.warn('Fertilize prefill failed', err);
     } finally {
@@ -77,12 +86,16 @@ export default function FertilizeModal({
 
   useEffect(() => {
     if (!open) {
-      setProductName('');
-      setProductForm('');
+      setProductName('MiracleGro Liquafeed');
+      setProductForm('liquid');
       setNpk('');
-      setMethod('');
+      setMethod('Soil drench');
       setConcentration('');
       setIsWatering(false);
+      setDryWeightLb('');
+      setWetWeightLb('');
+      setNpkOpen(false);
+      setConcentrationOpen(false);
     } else {
       // Set default isWatering when modal opens
       setIsWatering(defaultIsWatering);
@@ -95,9 +108,24 @@ export default function FertilizeModal({
   const plantCountLabel =
     plantIds.length > 1 ? ` (${plantIds.length} plants)` : '';
 
+  const toWeightValue = (value: string): number | null => {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const parsed = Number(trimmed);
+    if (!Number.isFinite(parsed) || parsed <= 0) return null;
+    return parsed;
+  };
+
   return (
     <View style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.35)', alignItems: 'center', justifyContent: 'center' }}>
-      <View style={{ width: '90%', maxWidth: 520, maxHeight: 500, borderRadius: 14, borderWidth: StyleSheet.hairlineWidth, borderColor: theme.colors.border, backgroundColor: theme.colors.card }}>
+      {/* Click-away closes dropdowns only */}
+      {(npkOpen || concentrationOpen) ? (
+        <TouchableOpacity 
+          onPress={() => { setNpkOpen(false); setConcentrationOpen(false); }} 
+          style={StyleSheet.absoluteFillObject} 
+        />
+      ) : null}
+      <View style={{ width: '90%', maxWidth: 520, maxHeight: 500, borderRadius: 14, borderWidth: StyleSheet.hairlineWidth, borderColor: theme.colors.border, backgroundColor: theme.colors.card, position: 'relative', zIndex: 2 }}>
         <ScrollView contentContainerStyle={{ padding: 16 }}>
           <ThemedText type="title">Log fertilizing{plantCountLabel}</ThemedText>
           {canPrefill && (
@@ -137,13 +165,64 @@ export default function FertilizeModal({
           
           <View style={{ height: 10 }} />
           <ThemedText style={{ fontWeight: '700' }}>NPK Ratio</ThemedText>
-          <TextInput
-            style={{ borderWidth: StyleSheet.hairlineWidth, borderColor: theme.colors.border, backgroundColor: theme.colors.input, color: theme.colors.text, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, marginTop: 6 }}
-            value={npk}
-            onChangeText={setNpk}
-            placeholder="e.g., 10-10-10 or 20-20-20"
-            placeholderTextColor={theme.colors.mutedText}
-          />
+          <View style={{ position: 'relative', marginTop: 6 }}>
+            <TouchableOpacity
+              onPress={() => { setNpkOpen((o) => !o); setConcentrationOpen(false); }}
+              activeOpacity={0.8}
+              style={{
+                borderWidth: StyleSheet.hairlineWidth,
+                borderColor: theme.colors.border,
+                backgroundColor: theme.colors.input,
+                borderRadius: 10,
+                paddingLeft: 12,
+                paddingRight: 40,
+                paddingVertical: 10,
+              }}
+            >
+              <ThemedText style={{ color: npk ? theme.colors.text : theme.colors.mutedText }}>
+                {npk || 'Select NPK ratio'}
+              </ThemedText>
+              <View style={{ position: 'absolute', right: 8, top: 0, bottom: 0, justifyContent: 'center', alignItems: 'center' }}>
+                <IconSymbol name={npkOpen ? 'chevron.up' : 'chevron.down'} size={20} color={theme.colors.mutedText} />
+              </View>
+            </TouchableOpacity>
+            {npkOpen && (
+              <View
+                style={{
+                  position: 'absolute',
+                  top: 42,
+                  left: 0,
+                  right: 0,
+                  zIndex: 100,
+                  borderWidth: StyleSheet.hairlineWidth,
+                  borderColor: theme.colors.border,
+                  borderRadius: 10,
+                  overflow: 'hidden',
+                  backgroundColor: theme.colors.card,
+                  shadowColor: '#000',
+                  shadowOpacity: 0.12,
+                  shadowRadius: 8,
+                  shadowOffset: { width: 0, height: 4 },
+                  elevation: 4,
+                }}
+              >
+                {npkOptions.map((option) => (
+                  <TouchableOpacity
+                    key={option}
+                    onPress={() => { setNpk(option); setNpkOpen(false); }}
+                    style={{
+                      paddingHorizontal: 12,
+                      paddingVertical: 12,
+                      borderBottomWidth: StyleSheet.hairlineWidth,
+                      borderBottomColor: theme.colors.border,
+                    }}
+                  >
+                    <ThemedText>{option}</ThemedText>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+          </View>
           
           <View style={{ height: 10 }} />
           <ThemedText style={{ fontWeight: '700' }}>Method</ThemedText>
@@ -157,13 +236,64 @@ export default function FertilizeModal({
           
           <View style={{ height: 10 }} />
           <ThemedText style={{ fontWeight: '700' }}>Concentration</ThemedText>
-          <TextInput
-            style={{ borderWidth: StyleSheet.hairlineWidth, borderColor: theme.colors.border, backgroundColor: theme.colors.input, color: theme.colors.text, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, marginTop: 6 }}
-            value={concentration}
-            onChangeText={setConcentration}
-            placeholder="e.g., 1/2 strength, 1 tsp per gallon"
-            placeholderTextColor={theme.colors.mutedText}
-          />
+          <View style={{ position: 'relative', marginTop: 6 }}>
+            <TouchableOpacity
+              onPress={() => { setConcentrationOpen((o) => !o); setNpkOpen(false); }}
+              activeOpacity={0.8}
+              style={{
+                borderWidth: StyleSheet.hairlineWidth,
+                borderColor: theme.colors.border,
+                backgroundColor: theme.colors.input,
+                borderRadius: 10,
+                paddingLeft: 12,
+                paddingRight: 40,
+                paddingVertical: 10,
+              }}
+            >
+              <ThemedText style={{ color: concentration ? theme.colors.text : theme.colors.mutedText }}>
+                {concentration || 'Select concentration'}
+              </ThemedText>
+              <View style={{ position: 'absolute', right: 8, top: 0, bottom: 0, justifyContent: 'center', alignItems: 'center' }}>
+                <IconSymbol name={concentrationOpen ? 'chevron.up' : 'chevron.down'} size={20} color={theme.colors.mutedText} />
+              </View>
+            </TouchableOpacity>
+            {concentrationOpen && (
+              <View
+                style={{
+                  position: 'absolute',
+                  top: 42,
+                  left: 0,
+                  right: 0,
+                  zIndex: 100,
+                  borderWidth: StyleSheet.hairlineWidth,
+                  borderColor: theme.colors.border,
+                  borderRadius: 10,
+                  overflow: 'hidden',
+                  backgroundColor: theme.colors.card,
+                  shadowColor: '#000',
+                  shadowOpacity: 0.12,
+                  shadowRadius: 8,
+                  shadowOffset: { width: 0, height: 4 },
+                  elevation: 4,
+                }}
+              >
+                {concentrationOptions.map((option) => (
+                  <TouchableOpacity
+                    key={option}
+                    onPress={() => { setConcentration(option); setConcentrationOpen(false); }}
+                    style={{
+                      paddingHorizontal: 12,
+                      paddingVertical: 12,
+                      borderBottomWidth: StyleSheet.hairlineWidth,
+                      borderBottomColor: theme.colors.border,
+                    }}
+                  >
+                    <ThemedText>{option}</ThemedText>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+          </View>
           
           <View style={{ height: 14 }} />
           
@@ -183,6 +313,26 @@ export default function FertilizeModal({
             <ThemedText style={{ fontWeight: '600' }}>Counts as watering</ThemedText>
           </Pressable>
           
+          <View style={{ height: 10 }} />
+          <ThemedText style={{ fontWeight: '700' }}>Dry weight (lb, optional)</ThemedText>
+          <TextInput
+            style={{ borderWidth: StyleSheet.hairlineWidth, borderColor: theme.colors.border, backgroundColor: theme.colors.input, color: theme.colors.text, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, marginTop: 6 }}
+            value={dryWeightLb}
+            onChangeText={setDryWeightLb}
+            placeholder="e.g., 8.5"
+            placeholderTextColor={theme.colors.mutedText}
+            keyboardType="decimal-pad"
+          />
+          <View style={{ height: 10 }} />
+          <ThemedText style={{ fontWeight: '700' }}>Wet weight (lb, optional)</ThemedText>
+          <TextInput
+            style={{ borderWidth: StyleSheet.hairlineWidth, borderColor: theme.colors.border, backgroundColor: theme.colors.input, color: theme.colors.text, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, marginTop: 6 }}
+            value={wetWeightLb}
+            onChangeText={setWetWeightLb}
+            placeholder="e.g., 9.2"
+            placeholderTextColor={theme.colors.mutedText}
+            keyboardType="decimal-pad"
+          />
           <View style={{ height: 14 }} />
           <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 12 }}>
             <TouchableOpacity onPress={onClose} style={[styles.envBtn, { borderColor: theme.colors.border }]}>
@@ -194,6 +344,8 @@ export default function FertilizeModal({
                 if (!productName.trim() || !plantIds.length) { return; }
                 try {
                   const now = new Date().toISOString();
+                  const dryWeight = toWeightValue(dryWeightLb);
+                  const wetWeight = toWeightValue(wetWeightLb);
                   const rows = plantIds.map((id) => ({
                     owner_id: user.id,
                     user_plant_id: id,
@@ -208,6 +360,8 @@ export default function FertilizeModal({
                       method: method.trim() || null,
                       concentration: concentration.trim() || null,
                       is_watering: isWatering,
+                      dry_weight_lb: dryWeight,
+                      wet_weight_lb: wetWeight,
                     },
                     note: null,
                   }));

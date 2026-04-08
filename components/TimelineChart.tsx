@@ -106,9 +106,9 @@ export default function TimelineChart({ eventType, userPlantId, height = 200 }: 
         let defaultDelayValue: number | null = null;
         if (userPlant?.plants_table_id) {
           const { data: plantData, error: plantError } = await supabase
-            .from('plants')
+            .from('plants_schedule')
             .select('water_interval_days_active, water_interval_days_inactive, schedule_same_year_round, active_season_start_date, active_season_end_date')
-            .eq('id', userPlant.plants_table_id)
+            .eq('plant_id', userPlant.plants_table_id)
             .maybeSingle();
 
           if (plantError) throw plantError;

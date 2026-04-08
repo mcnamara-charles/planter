@@ -23,6 +23,8 @@ type Props = PropsWithChildren<{
   headerHeight?: number;
   /** optional: render on top of the header (e.g., skeleton) */
   headerOverlay?: ReactElement | null;
+  /** optional: render actions on top of the header (with pointer events enabled) */
+  headerActions?: ReactElement | null;
   /** optional: pull-to-refresh */
   refreshing?: boolean;
   onRefresh?: () => void;
@@ -42,6 +44,7 @@ const ParallaxScrollView = forwardRef<ParallaxScrollViewRef, Props>(({
   headerBackgroundColor,
   headerHeight = DEFAULT_HEADER_HEIGHT,
   headerOverlay = null,
+  headerActions = null,
   refreshing = false,
   onRefresh,
   enableLightbox = false,
@@ -103,6 +106,7 @@ const ParallaxScrollView = forwardRef<ParallaxScrollViewRef, Props>(({
             headerImage
           )}
           {headerOverlay ? <Animated.View style={styles.headerOverlay}>{headerOverlay}</Animated.View> : null}
+          {headerActions ? <Animated.View style={styles.headerActions}>{headerActions}</Animated.View> : null}
         </Animated.View>
 
         <ThemedView style={styles.content}>{children}</ThemedView>
@@ -132,6 +136,11 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     pointerEvents: 'none',
     zIndex: 2,
+  },
+  headerActions: {
+    ...StyleSheet.absoluteFillObject,
+    pointerEvents: 'box-none',
+    zIndex: 3,
   },
   content: {
     flex: 1,

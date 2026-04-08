@@ -6,15 +6,78 @@ const NS = '[supabasePlants]';
 function nowMs() { return Date.now(); }
 function durMs(since: number) { return `${Date.now() - since}ms`; }
 
-const READ_COLUMNS = `
-  id, plant_name, description, availability, rarity,
-  care_light, care_water, care_temp_humidity, care_fertilizer, care_pruning,
-  soil_description, propagation_methods_json,
-  schedule_same_year_round, active_season_start_date, active_season_end_date,
-  water_interval_days_active, water_interval_days_inactive,
-  fert_interval_days_active, fert_interval_days_inactive,
-  data_response_version, data_response_meta
-`;
+/**
+ * Field mappings: which table each field belongs to
+ */
+const CORE_FIELDS = [
+  'id', 'plant_name', 'plant_scientific_name', 'plant_main_image', 'origin_region',
+  'description', 'tags', 'is_obtainable', 'family', 'genus', 'rank',
+  'gbif_usage_key', 'gbif_match_type', 'gbif_confidence', 'species_taxon_id',
+  'created_by', 'created_at', 'updated_at', 'plant_name_norm', 'plant_sci_norm',
+  'genus_norm', 'data_response_version', 'data_response_meta'
+];
+
+const CARE_FIELDS = [
+  'preferred_humidity', 'preferred_light', 'preferred_temp_min_c', 'preferred_temp_max_c',
+  'watering_preference', 'soil_preference', 'soil_description', 'fertilizer_freq_per_month',
+  'toxicity', 'toxicity_notes', 'growth_rate', 'care_difficulty',
+  'mature_height_cm', 'mature_spread_cm', 'preferred_window_best', 'preferred_window_ok',
+  'summer_note', 'care_light', 'care_water', 'care_temp_humidity',
+  'care_fertilizer', 'care_pruning', 'propagation_methods_json'
+];
+
+const MARKET_FIELDS = [
+  'availability', 'rarity'
+];
+
+const SCHEDULE_FIELDS = [
+  'schedule_same_year_round', 'active_season_start_date', 'active_season_end_date',
+  'water_interval_days_active', 'water_interval_days_inactive',
+  'fert_interval_days_active', 'fert_interval_days_inactive'
+];
+
+/**
+ * Split payload into table-specific updates
+ */
+function splitPayloadByTable<T extends Record<string, any>>(payload: T): {
+  core: Record<string, any>;
+  care: Record<string, any>;
+  market: Record<string, any>;
+  schedule: Record<string, any>;
+} {
+  const core: Record<string, any> = {};
+  const care: Record<string, any> = {};
+  const market: Record<string, any> = {};
+  const schedule: Record<string, any> = {};
+
+  for (const [key, value] of Object.entries(payload)) {
+    if (CORE_FIELDS.includes(key)) {
+      core[key] = value;
+    } else if (CARE_FIELDS.includes(key)) {
+      care[key] = value;
+    } else if (MARKET_FIELDS.includes(key)) {
+      market[key] = value;
+    } else if (SCHEDULE_FIELDS.includes(key)) {
+      schedule[key] = value;
+    } else {
+      console.warn(`${NS} Unknown field in payload: ${key}`);
+    }
+  }
+
+  return { core, care, market, schedule };
+}
+
+/**
+ * Merge data from all microtables into a single object
+ */
+function mergePlantData(core: any, care: any, market: any, schedule: any): any {
+  return {
+    ...core,
+    ...(care || {}),
+    ...(market || {}),
+    ...(schedule || {}),
+  };
+}
 
 /** ---------- JSONB-safe verification helpers ---------- **/
 
@@ -70,29 +133,48 @@ function equalJSONBSafe(key: string, expected: any, actual: any): boolean {
 
 /** ----------------------------------------------------- **/
 
+/**
+ * Read plant data from all microtables
+ */
 export async function readPlantRow(id: string) {
   const t0 = nowMs();
   console.log(`${NS} readPlantRow(${id})`);
-  const { data, error } = await supabase
-    .from('plants')
-    .select(READ_COLUMNS)
-    .eq('id', id)
-    .maybeSingle();
+  
+  // Fetch from all tables in parallel
+  const [coreResult, careResult, marketResult, scheduleResult] = await Promise.all([
+    supabase.from('plants_core').select('*').eq('id', id).maybeSingle(),
+    supabase.from('plants_care').select('*').eq('plant_id', id).maybeSingle(),
+    supabase.from('plants_market_meta').select('*').eq('plant_id', id).maybeSingle(),
+    supabase.from('plants_schedule').select('*').eq('plant_id', id).maybeSingle(),
+  ]);
 
-  if (error) {
-    console.warn(`${NS} readPlantRow(${id}) ERROR:`, error);
-    throw error;
+  if (coreResult.error) {
+    console.warn(`${NS} readPlantRow(${id}) ERROR (core):`, coreResult.error);
+    throw coreResult.error;
   }
-  if (!data) {
-    console.warn(`${NS} readPlantRow(${id}) -> no row`);
+
+  if (!coreResult.data) {
+    console.warn(`${NS} readPlantRow(${id}) -> no core row`);
     return null;
   }
+
+  // Merge all data
+  const merged = mergePlantData(
+    coreResult.data,
+    careResult.data || null,
+    marketResult.data || null,
+    scheduleResult.data || null
+  );
+
   console.log(`${NS} readPlantRow(${id}) OK in ${durMs(t0)}`, {
-    version: (data as any)?.data_response_version ?? 0,
+    version: merged?.data_response_version ?? 0,
   });
-  return data as RowShape;
+  return merged as RowShape;
 }
 
+/**
+ * Save plant data to appropriate microtables
+ */
 export async function savePlantsRow<T extends Record<string, any>>(id: string, payload: T) {
   const t0 = nowMs();
 
@@ -108,27 +190,91 @@ export async function savePlantsRow<T extends Record<string, any>>(id: string, p
     return null;
   }
 
+  // Split payload by table
+  const { core, care, market, schedule } = splitPayloadByTable(clean);
 
-  const { data, error, count } = await supabase
-    .from('plants')
-    .update(clean, { count: 'exact' })
-    .eq('id', id)
-    .select(READ_COLUMNS)
-    .maybeSingle();
+  // Update each table that has changes
+  const updates: Promise<any>[] = [];
 
-  if (error) {
-    console.warn(`${NS} savePlantsRow(${id}) ERROR:`, error);
-    throw error;
+  if (Object.keys(core).length > 0) {
+    updates.push(
+      supabase
+        .from('plants_core')
+        .update(core)
+        .eq('id', id)
+        .select('*')
+        .maybeSingle()
+    );
+  } else {
+    updates.push(Promise.resolve({ data: null, error: null }));
   }
 
-  if (!count || !data) {
-    console.warn(`${NS} savePlantsRow(${id}) anomaly: count=${count} data=${!!data}`);
-    throw new Error('savePlantsRow: update did not affect any rows (RLS? bad id?)');
+  if (Object.keys(care).length > 0) {
+    updates.push(
+      supabase
+        .from('plants_care')
+        .upsert({ plant_id: id, ...care }, { onConflict: 'plant_id' })
+        .select('*')
+        .maybeSingle()
+    );
+  } else {
+    updates.push(Promise.resolve({ data: null, error: null }));
   }
+
+  if (Object.keys(market).length > 0) {
+    updates.push(
+      supabase
+        .from('plants_market_meta')
+        .upsert({ plant_id: id, ...market }, { onConflict: 'plant_id' })
+        .select('*')
+        .maybeSingle()
+    );
+  } else {
+    updates.push(Promise.resolve({ data: null, error: null }));
+  }
+
+  if (Object.keys(schedule).length > 0) {
+    updates.push(
+      supabase
+        .from('plants_schedule')
+        .upsert({ plant_id: id, ...schedule }, { onConflict: 'plant_id' })
+        .select('*')
+        .maybeSingle()
+    );
+  } else {
+    updates.push(Promise.resolve({ data: null, error: null }));
+  }
+
+  const [coreResult, careResult, marketResult, scheduleResult] = await Promise.all(updates);
+
+  // Check for errors
+  if (coreResult.error) {
+    console.warn(`${NS} savePlantsRow(${id}) ERROR (core):`, coreResult.error);
+    throw coreResult.error;
+  }
+  if (careResult.error) {
+    console.warn(`${NS} savePlantsRow(${id}) ERROR (care):`, careResult.error);
+    throw careResult.error;
+  }
+  if (marketResult.error) {
+    console.warn(`${NS} savePlantsRow(${id}) ERROR (market):`, marketResult.error);
+    throw marketResult.error;
+  }
+  if (scheduleResult.error) {
+    console.warn(`${NS} savePlantsRow(${id}) ERROR (schedule):`, scheduleResult.error);
+    throw scheduleResult.error;
+  }
+
+  // Merge results
+  const merged = mergePlantData(
+    coreResult.data || {},
+    careResult.data || null,
+    marketResult.data || null,
+    scheduleResult.data || null
+  );
 
   console.log(`${NS} savePlantsRow(${id}) OK in ${durMs(t0)}`, {
-    count,
-    version: (data as any)?.data_response_version ?? null,
+    version: merged?.data_response_version ?? null,
   });
 
   // Verify that returned row reflects what we attempted to write (JSONB/array-order tolerant).
@@ -136,7 +282,7 @@ export async function savePlantsRow<T extends Record<string, any>>(id: string, p
   for (const k of Object.keys(clean)) {
     if (k === 'data_response_meta') continue; // allow serialization differences
     const expected = clean[k];
-    const actual = (data as any)[k];
+    const actual = (merged as any)[k];
 
     const ok = equalJSONBSafe(k, expected, actual);
     if (!ok) mismatches.push({ key: k, expected, actual });
@@ -158,5 +304,5 @@ export async function savePlantsRow<T extends Record<string, any>>(id: string, p
     }
   }
 
-  return data as RowShape;
+  return merged as RowShape;
 }

@@ -30,7 +30,8 @@ const MAPPING: Record<string, IconDescriptor> = {
   grid: { lib: 'material', name: 'grid-view' },
   list: { lib: 'material', name: 'view-list' },
   leaf: { lib: 'material', name: 'eco' },
-  star: { lib: 'material', name: 'star' },
+  star: { lib: 'material', name: 'star-border' },
+  'star.fill': { lib: 'material', name: 'star' },
   'chevron.left.forwardslash.chevron.right': { lib: 'material', name: 'code' },
   'chevron.right': { lib: 'material', name: 'chevron-right' },
   'chevron.down': { lib: 'entypo', name: 'chevron-down' },
@@ -108,6 +109,10 @@ const MAPPING: Record<string, IconDescriptor> = {
   
   // ---- Positioning/arrangement icon ----
   position: { lib: 'material', name: 'view-comfy' }, // grid/layout icon for plant positioning
+  
+  // ---- Plant measurement icons ----
+  ruler: { lib: 'material', name: 'straighten' }, // ruler/height measurement
+  square: { lib: 'material', name: 'crop-free' }, // square/width measurement
 };
 
 // Drive the public prop name from the keys of our mapping

@@ -26,6 +26,8 @@ export default function WaterModal({
   const [method, setMethod] = useState<WaterMethod>('');
   const [waterType, setWaterType] = useState('');
   const [amount, setAmount] = useState('');
+  const [dryWeightLb, setDryWeightLb] = useState('');
+  const [wetWeightLb, setWetWeightLb] = useState('');
   const plantIds = userPlantIds ?? [];
 
   useEffect(() => {
@@ -34,6 +36,8 @@ export default function WaterModal({
       setMethod('');
       setWaterType('');
       setAmount('');
+      setDryWeightLb('');
+      setWetWeightLb('');
     }
   }, [open]);
 
@@ -42,6 +46,14 @@ export default function WaterModal({
 
   const plantCountLabel =
     plantIds.length > 1 ? ` (${plantIds.length} plants)` : '';
+
+  const toWeightValue = (value: string): number | null => {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const parsed = Number(trimmed);
+    if (!Number.isFinite(parsed) || parsed <= 0) return null;
+    return parsed;
+  };
 
   return (
     <View style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.35)', alignItems: 'center', justifyContent: 'center' }}>
@@ -124,6 +136,26 @@ export default function WaterModal({
           placeholder="e.g., 500 mL or 0.5 L"
           placeholderTextColor={theme.colors.mutedText}
         />
+        <View style={{ height: 10 }} />
+        <ThemedText style={{ fontWeight: '700' }}>Dry weight (lb, optional)</ThemedText>
+        <TextInput
+          style={{ borderWidth: StyleSheet.hairlineWidth, borderColor: theme.colors.border, backgroundColor: theme.colors.input, color: theme.colors.text, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10 }}
+          value={dryWeightLb}
+          onChangeText={setDryWeightLb}
+          placeholder="e.g., 8.5"
+          placeholderTextColor={theme.colors.mutedText}
+          keyboardType="decimal-pad"
+        />
+        <View style={{ height: 10 }} />
+        <ThemedText style={{ fontWeight: '700' }}>Wet weight (lb, optional)</ThemedText>
+        <TextInput
+          style={{ borderWidth: StyleSheet.hairlineWidth, borderColor: theme.colors.border, backgroundColor: theme.colors.input, color: theme.colors.text, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10 }}
+          value={wetWeightLb}
+          onChangeText={setWetWeightLb}
+          placeholder="e.g., 9.2"
+          placeholderTextColor={theme.colors.mutedText}
+          keyboardType="decimal-pad"
+        />
         <View style={{ height: 14 }} />
         <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 12 }}>
           <TouchableOpacity onPress={onClose} style={[styles.envBtn, { borderColor: theme.colors.border }]}>
@@ -140,6 +172,8 @@ export default function WaterModal({
               }
               try {
                 const now = new Date().toISOString();
+                const dryWeight = toWeightValue(dryWeightLb);
+                const wetWeight = toWeightValue(wetWeightLb);
                 const rows = plantIds.map((id) => ({
                   owner_id: user.id,
                   user_plant_id: id,
@@ -149,6 +183,8 @@ export default function WaterModal({
                     method,
                     water_type: waterType || null,
                     amount: amount || null,
+                    dry_weight_lb: dryWeight,
+                    wet_weight_lb: wetWeight,
                   },
                   note: null,
                 }));

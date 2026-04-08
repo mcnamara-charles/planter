@@ -12,6 +12,10 @@ export type Plant = {
   scheduleSameYearRound?: boolean | null;
   waterDelay?: number | null;
   hasActivePest?: boolean;
+  deceasedAt?: string | null;
+  soldAt?: string | null;
+  updatedAt?: string | null;
+  defaultPhotoId?: string | null;
 };
 
 

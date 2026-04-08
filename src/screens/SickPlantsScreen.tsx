@@ -169,7 +169,7 @@ export default function SickPlantsScreen() {
       let plantsById: Record<string, any> = {};
       if (sickPlantTableIds.length > 0) {
         const { data: plantRows, error: pErr } = await supabase
-          .from('plants')
+          .from('plants_core')
           .select('id, plant_name, plant_scientific_name')
           .in('id', sickPlantTableIds);
         if (pErr) throw pErr;

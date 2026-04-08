@@ -82,6 +82,15 @@ export function useRebuildAllWaterSchedules() {
     setCompletedPlantsCount(0);
     setCurrentPhase('Preparing...');
 
+    // Get current user ID
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user?.id) {
+      setLoading(false);
+      setErrors([{ userPlantId: '', message: 'Not authenticated' }]);
+      return;
+    }
+    const ownerId = user.id;
+
     let waterTargets: string[];
     let fertTargets: string[];
     let pestTargets: string[];
@@ -90,7 +99,7 @@ export function useRebuildAllWaterSchedules() {
       // TESTING MODE: Fetch all user plants and rebuild everything
       // eslint-disable-next-line no-console
       console.log('[useRebuildAllWaterSchedules] FORCE_REBUILD_ALL is enabled - rebuilding all schedules');
-      const allPlantIds = await fetchAllUserPlantIds();
+      const allPlantIds = await fetchAllUserPlantIds(ownerId);
       waterTargets = allPlantIds;
       fertTargets = allPlantIds;
       pestTargets = allPlantIds;
@@ -103,9 +112,9 @@ export function useRebuildAllWaterSchedules() {
         fertNeedRebuild,
         pestNeedUpdate,
       ] = await Promise.all([
-        fetchUserPlantIdsNeedingRebuild('water'),
-        fetchUserPlantIdsNeedingRebuild('fertilize'),
-        fetchUserPlantIdsNeedingPestScheduleUpdate(),
+        fetchUserPlantIdsNeedingRebuild('water', ownerId),
+        fetchUserPlantIdsNeedingRebuild('fertilize', ownerId),
+        fetchUserPlantIdsNeedingPestScheduleUpdate(ownerId),
       ]);
 
       if (skipOverdue) {
@@ -206,12 +215,8 @@ export function useRebuildAllWaterSchedules() {
     // eslint-disable-next-line no-console
     console.log(`[useRebuildAllWaterSchedules] Processing ${plantsToProcess.length} plants in batches of ${PLANTS_PER_BATCH}`);
     
-    // Step 0: Get current user ID for owner_id fallback
-    const { data: { user } } = await supabase.auth.getUser();
-    const currentUserId = user?.id;
-    if (!currentUserId) {
-      throw new Error('No authenticated user found');
-    }
+    // Step 0: Use ownerId we already have from earlier in the function
+    const currentUserId = ownerId;
 
     // Step 0: Batch fetch all data we need upfront (ONE database roundtrip instead of 5 per plant!)
     setCurrentPhase(`Fetching data for ${uniquePlants.size} plants...`);
@@ -233,16 +238,20 @@ export function useRebuildAllWaterSchedules() {
         plants_table_id,
         plants:plants_table_id (
           id,
-          schedule_same_year_round,
-          active_season_start_date,
-          active_season_end_date,
-          water_interval_days_active,
-          water_interval_days_inactive,
-          fert_interval_days_active,
-          fert_interval_days_inactive
+          schedule:plants_schedule (
+            schedule_same_year_round,
+            active_season_start_date,
+            active_season_end_date,
+            water_interval_days_active,
+            water_interval_days_inactive,
+            fert_interval_days_active,
+            fert_interval_days_inactive
+          )
         )
       `)
-      .in('id', allPlantIds);
+      .in('id', allPlantIds)
+      .is('sold_at', null) // Exclude sold plants
+      .is('deceased_at', null); // Exclude deceased plants
 
     if (plantsError) throw plantsError;
     
@@ -252,15 +261,16 @@ export function useRebuildAllWaterSchedules() {
     
     (plantsData || []).forEach((plant: any) => {
       if (plant.plants) {
+        const schedule = Array.isArray(plant.plants.schedule) ? plant.plants.schedule[0] : plant.plants.schedule;
         schedulingFieldsMap.set(plant.id, {
           plantId: plant.plants.id,
-          schedule_same_year_round: plant.plants.schedule_same_year_round,
-          active_season_start_date: plant.plants.active_season_start_date,
-          active_season_end_date: plant.plants.active_season_end_date,
-          water_interval_days_active: plant.plants.water_interval_days_active,
-          water_interval_days_inactive: plant.plants.water_interval_days_inactive,
-          fert_interval_days_active: plant.plants.fert_interval_days_active,
-          fert_interval_days_inactive: plant.plants.fert_interval_days_inactive,
+          schedule_same_year_round: schedule?.schedule_same_year_round ?? null,
+          active_season_start_date: schedule?.active_season_start_date ?? null,
+          active_season_end_date: schedule?.active_season_end_date ?? null,
+          water_interval_days_active: schedule?.water_interval_days_active ?? null,
+          water_interval_days_inactive: schedule?.water_interval_days_inactive ?? null,
+          fert_interval_days_active: schedule?.fert_interval_days_active ?? null,
+          fert_interval_days_inactive: schedule?.fert_interval_days_inactive ?? null,
           light_type: plant.light_type,
           system_type: plant.system_type,
           water_delay: plant.water_delay,
@@ -362,8 +372,14 @@ export function useRebuildAllWaterSchedules() {
           try {
             // Get cached data instead of fetching
             const sched = schedulingFieldsMap.get(plantId);
+            
+            // Skip plants without scheduling fields (e.g., custom species without plant data, or plants without generated care data)
             if (!sched) {
-              throw new Error('Plant scheduling fields not found in batch fetch');
+              // eslint-disable-next-line no-console
+              console.log(`[useRebuildAllWaterSchedules] Skipping plant ${plantId} - no scheduling fields available`);
+              calculatedOpsCount++;
+              setDoneCount(baseProgressOffset + calculatedOpsCount);
+              return { plantId, schedulesCount: 0 };
             }
 
             const lastWater = needsWater ? (waterEventsMap.get(plantId) || null) : null;

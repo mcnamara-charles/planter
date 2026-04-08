@@ -228,6 +228,8 @@ export function PropagatedByAutocomplete(props: Props) {
           )
         `)
         .eq('owner_id', ownerId)
+        .is('sold_at', null) // Exclude sold plants
+        .is('deceased_at', null) // Exclude deceased plants
         // 2) OR over columns on user_plants
         .or(
           [

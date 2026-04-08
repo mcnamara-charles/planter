@@ -662,13 +662,15 @@ export async function fetchPlantSchedulingFieldsByUserPlant(
       plants_table_id,
       plants:plants_table_id (
         id,
-        schedule_same_year_round,
-        active_season_start_date,
-        active_season_end_date,
-        water_interval_days_active,
-        water_interval_days_inactive,
-        fert_interval_days_active,
-        fert_interval_days_inactive
+        schedule:plants_schedule (
+          schedule_same_year_round,
+          active_season_start_date,
+          active_season_end_date,
+          water_interval_days_active,
+          water_interval_days_inactive,
+          fert_interval_days_active,
+          fert_interval_days_inactive
+        )
       )
     `)
     .eq('id', userPlantId)
@@ -678,15 +680,16 @@ export async function fetchPlantSchedulingFieldsByUserPlant(
   if (!data || !(data as any).plants) return null;
 
   const plants = (data as any).plants;
+  const schedule = Array.isArray(plants.schedule) ? plants.schedule[0] : plants.schedule;
   return {
     plantId: plants.id as string,
-    schedule_same_year_round: plants.schedule_same_year_round as boolean | null,
-    active_season_start_date: plants.active_season_start_date as string | null,
-    active_season_end_date: plants.active_season_end_date as string | null,
-    water_interval_days_active: plants.water_interval_days_active as number | null,
-    water_interval_days_inactive: plants.water_interval_days_inactive as number | null,
-    fert_interval_days_active: plants.fert_interval_days_active as number | null,
-    fert_interval_days_inactive: plants.fert_interval_days_inactive as number | null,
+    schedule_same_year_round: schedule?.schedule_same_year_round as boolean | null,
+    active_season_start_date: schedule?.active_season_start_date as string | null,
+    active_season_end_date: schedule?.active_season_end_date as string | null,
+    water_interval_days_active: schedule?.water_interval_days_active as number | null,
+    water_interval_days_inactive: schedule?.water_interval_days_inactive as number | null,
+    fert_interval_days_active: schedule?.fert_interval_days_active as number | null,
+    fert_interval_days_inactive: schedule?.fert_interval_days_inactive as number | null,
     light_type: (data as any).light_type as string | null,
     system_type: (data as any).system_type as string | null,
     water_delay: (data as any).water_delay as number | null,
@@ -695,9 +698,10 @@ export async function fetchPlantSchedulingFieldsByUserPlant(
 
 /** List (user_plant_id, plants_table_id) for the current user. */
 export async function fetchUserPlantIdsNeedingRebuild(
-  eventType: ScheduleEventType
+  eventType: ScheduleEventType,
+  ownerId: string
 ): Promise<string[]> {
-  const allIds = await fetchAllUserPlantIds();
+  const allIds = await fetchAllUserPlantIds(ownerId);
   if (allIds.length === 0) return [];
 
   // For water schedules, exclude reservoir plants
@@ -707,7 +711,9 @@ export async function fetchUserPlantIdsNeedingRebuild(
     const { data: plantsData, error: plantsError } = await supabase
       .from('user_plants')
       .select('id, system_type')
-      .in('id', allIds);
+      .in('id', allIds)
+      .is('sold_at', null) // Exclude sold plants
+      .is('deceased_at', null); // Exclude deceased plants
 
     if (plantsError) throw plantsError;
     idsToCheck = ((plantsData ?? []) as Array<{ id: string; system_type: string | null }>)
@@ -725,9 +731,16 @@ export async function fetchUserPlantIdsNeedingRebuild(
     const scheduleUpdated = schedulesMap.get(userPlantId);
     const timelineEventTime = timelineMap.get(userPlantId);
 
-    // If there's a timeline event but no schedule, or timeline event is newer than schedule, rebuild
-    if (timelineEventTime) {
-      if (!scheduleUpdated || new Date(timelineEventTime) > new Date(scheduleUpdated)) {
+    // Rebuild if:
+    // 1. Plant has no schedule at all (new plants should get schedules)
+    // 2. OR there's a timeline event but no schedule
+    // 3. OR timeline event is newer than schedule
+    if (!scheduleUpdated) {
+      // Plant has no schedule - always rebuild (for new plants or plants that lost their schedule)
+      needsRebuild.push(userPlantId);
+    } else if (timelineEventTime) {
+      // Plant has a schedule, but check if timeline event is newer
+      if (new Date(timelineEventTime) > new Date(scheduleUpdated)) {
         needsRebuild.push(userPlantId);
       }
     }
@@ -737,7 +750,7 @@ export async function fetchUserPlantIdsNeedingRebuild(
 }
 
 /** All user_plant_ids for current user (only ids). */
-export async function fetchAllUserPlantIds(): Promise<string[]> {
+export async function fetchAllUserPlantIds(ownerId: string): Promise<string[]> {
   // Fetch all rows - Supabase default limit is 1000, but we'll handle pagination if needed
   let allIds: string[] = [];
   let page = 0;
@@ -748,6 +761,9 @@ export async function fetchAllUserPlantIds(): Promise<string[]> {
     const { data, error } = await supabase
       .from('user_plants')
       .select('id')
+      .eq('owner_id', ownerId)
+      .is('sold_at', null) // Exclude sold plants
+      .is('deceased_at', null) // Exclude deceased plants
       .order('created_at', { ascending: true })
       .range(page * pageSize, (page + 1) * pageSize - 1);
 
@@ -817,8 +833,8 @@ export async function updatePestTreatSchedule(userPlantId: string): Promise<any>
 }
 
 /** Fetch user_plant_ids that have pest events and need pest_treat schedule updates. */
-export async function fetchUserPlantIdsNeedingPestScheduleUpdate(): Promise<string[]> {
-  const allIds = await fetchAllUserPlantIds();
+export async function fetchUserPlantIdsNeedingPestScheduleUpdate(ownerId: string): Promise<string[]> {
+  const allIds = await fetchAllUserPlantIds(ownerId);
   if (allIds.length === 0) return [];
 
   // Get pest_treat schedules and their updated_at times

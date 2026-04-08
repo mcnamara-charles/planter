@@ -380,7 +380,7 @@ export default function PlantIdentificationResultScreen() {
       }
   
       const { error: upPlantErr } = await supabase
-        .from('plants')
+        .from('plants_core')
         .update({ plant_main_image: chosen.source_url })
         .eq('id', plantId);
       if (upPlantErr) dlog('DB:updateMainImage:error', upPlantErr.message);
@@ -397,16 +397,39 @@ export default function PlantIdentificationResultScreen() {
     try {
       setStatus((s) => ({ ...s, loading: true, error: null }));
   
-      const { data: plantData, error: plantErr } = await supabase
-        .from('plants')
-        .select(`
-          id, plant_name, plant_scientific_name, description, availability, rarity,
-          propagation_methods_json, soil_description,
-          gbif_usage_key, plant_main_image
-        `)
+      // Fetch from all microtables
+      const { data: coreData, error: coreErr } = await supabase
+        .from('plants_core')
+        .select('id, plant_name, plant_scientific_name, description, gbif_usage_key, plant_main_image')
         .ilike('plant_scientific_name', `%${scientificName}%`)
         .limit(1)
         .maybeSingle();
+      
+      if (coreErr) throw coreErr;
+      if (!coreData) {
+        setStatus((s) => ({ ...s, loading: false, error: 'Plant not found' }));
+        return;
+      }
+
+      // Fetch from care and market tables
+      const [careResult, marketResult] = await Promise.all([
+        supabase
+          .from('plants_care')
+          .select('propagation_methods_json, soil_description')
+          .eq('plant_id', coreData.id)
+          .maybeSingle(),
+        supabase
+          .from('plants_market_meta')
+          .select('availability, rarity')
+          .eq('plant_id', coreData.id)
+          .maybeSingle(),
+      ]);
+
+      const plantData = {
+        ...coreData,
+        ...careResult.data,
+        ...marketResult.data,
+      };
   
       if (plantErr) throw plantErr;
   
@@ -973,7 +996,7 @@ export default function PlantIdentificationResultScreen() {
           try {
             setOverlay({ visible: true, message: 'Updating common name…' });
             const { error } = await supabase
-              .from('plants')
+              .from('plants_core')
               .update({ plant_name: suggested })
               .eq('id', plant.plantsTableId);
             if (error) throw error;

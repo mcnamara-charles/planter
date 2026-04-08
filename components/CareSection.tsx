@@ -32,6 +32,7 @@ type OptimisticCare = {
 export default function CareSection({
   isOpen,
   plantsTableId,
+  userPlantId,
   commonName,
   displayName,
   scientificName,
@@ -49,6 +50,7 @@ export default function CareSection({
 }: {
   isOpen: boolean;
   plantsTableId: string | null;
+  userPlantId?: string;
   commonName: string;
   displayName: string;
   scientificName: string;
@@ -69,6 +71,7 @@ export default function CareSection({
   const [error, setError] = useState<string | null>(null);
   const [care, setCare] = useState<CareRows | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [customWaterInterval, setCustomWaterInterval] = useState<number | null>(null);
 
 
   const fetchCare = useCallback(async () => {
@@ -76,20 +79,44 @@ export default function CareSection({
     try {
       setLoading(true);
       setError(null);
-      const { data, error } = await supabase
-        .from('plants')
-        .select('care_light, care_water, care_temp_humidity, care_fertilizer, care_pruning, schedule_same_year_round, active_season_start_date, active_season_end_date, water_interval_days_active, water_interval_days_inactive, fert_interval_days_active, fert_interval_days_inactive')
-        .eq('id', plantsTableId)
-        .maybeSingle<CareRows>();
-      if (error) throw error;
-      setCare(data ?? {});
+      // Fetch from both plants_care and plants_schedule
+      const [careResult, scheduleResult] = await Promise.all([
+        supabase
+          .from('plants_care')
+          .select('care_light, care_water, care_temp_humidity, care_fertilizer, care_pruning')
+          .eq('plant_id', plantsTableId)
+          .maybeSingle<Partial<CareRows>>(),
+        supabase
+          .from('plants_schedule')
+          .select('schedule_same_year_round, active_season_start_date, active_season_end_date, water_interval_days_active, water_interval_days_inactive, fert_interval_days_active, fert_interval_days_inactive')
+          .eq('plant_id', plantsTableId)
+          .maybeSingle<Partial<CareRows>>(),
+      ]);
+      if (careResult.error) throw careResult.error;
+      if (scheduleResult.error) throw scheduleResult.error;
+      setCare({ ...careResult.data, ...scheduleResult.data } ?? {});
+
+      // Fetch custom water interval from user_plants table
+      if (userPlantId) {
+        const { data: userPlant, error: userPlantError } = await supabase
+          .from('user_plants')
+          .select('water_delay')
+          .eq('id', userPlantId)
+          .maybeSingle();
+        
+        if (!userPlantError && userPlant?.water_delay !== null && userPlant?.water_delay !== undefined) {
+          setCustomWaterInterval(userPlant.water_delay);
+        } else {
+          setCustomWaterInterval(null);
+        }
+      }
     } catch (e: any) {
       setError(e?.message ?? 'Failed to load care info');
       setCare(null);
     } finally {
       setLoading(false);
     }
-  }, [plantsTableId]);
+  }, [plantsTableId, userPlantId]);
 
   useEffect(() => {
     if (isOpen && plantsTableId) fetchCare();
@@ -104,6 +131,9 @@ export default function CareSection({
 
   // merged view model (falls back to placeholders in Row)
   const vm = useMemo<CareRows>(() => ({ ...(care ?? {}) }), [care]);
+
+  // Determine if using custom water interval
+  const isCustomWaterInterval = customWaterInterval !== null;
 
   // Format date as "Month Day" (e.g., "March 15")
   const formatSeasonDate = (dateString: string | null | undefined): string => {
@@ -172,37 +202,49 @@ export default function CareSection({
       ? isInActiveSeason(vm.active_season_start_date, vm.active_season_end_date)
       : false;
 
-    if (!hasActiveInterval) return null;
+    if (!hasActiveInterval && !isCustomWaterInterval) return null;
+
+    const waterInterval = isCustomWaterInterval && customWaterInterval !== null ? customWaterInterval : vm.water_interval_days_active;
 
     return (
       <View style={styles.waterIntervalContainer}>
         {isYearRound ? (
           <View style={styles.waterIntervalRow}>
-            <View style={[styles.waterIntervalBadge, { backgroundColor: 'rgba(16, 185, 129, 0.15)' }]}>
+            <View style={styles.waterIntervalBadge}>
               <ThemedText style={styles.waterIntervalLabel}>Water every</ThemedText>
-              <ThemedText style={[styles.waterIntervalValue, { color: '#10B981' }]}>
-                {vm.water_interval_days_active} {vm.water_interval_days_active === 1 ? 'day' : 'days'}
+              <ThemedText style={styles.waterIntervalValue}>
+                {waterInterval} {waterInterval === 1 ? 'day' : 'days'}
               </ThemedText>
+              {isCustomWaterInterval && (
+                <View style={styles.customChip}>
+                  <ThemedText style={styles.customChipText}>Custom</ThemedText>
+                </View>
+              )}
             </View>
           </View>
         ) : (
           <View style={styles.waterIntervalRow}>
-            <View style={[styles.waterIntervalBadge, { backgroundColor: 'rgba(16, 185, 129, 0.15)' }]}>
+            <View style={styles.waterIntervalBadge}>
               <View style={styles.waterIntervalLabelRow}>
                 <ThemedText style={styles.waterIntervalLabel}>Active season</ThemedText>
-                {isCurrentlyActive && <View style={[styles.seasonIndicator, { backgroundColor: '#10B981' }]} />}
+                {isCurrentlyActive && <View style={styles.seasonIndicator} />}
               </View>
-              <ThemedText style={[styles.waterIntervalValue, { color: '#10B981' }]}>
-                Every {vm.water_interval_days_active} {vm.water_interval_days_active === 1 ? 'day' : 'days'}
+              <ThemedText style={styles.waterIntervalValue}>
+                Every {waterInterval} {waterInterval === 1 ? 'day' : 'days'}
               </ThemedText>
+              {isCustomWaterInterval && (
+                <View style={styles.customChip}>
+                  <ThemedText style={styles.customChipText}>Custom</ThemedText>
+                </View>
+              )}
             </View>
-            {hasInactiveInterval && (
-              <View style={[styles.waterIntervalBadge, { backgroundColor: 'rgba(156, 163, 175, 0.15)' }]}>
+            {hasInactiveInterval && !isCustomWaterInterval && (
+              <View style={styles.waterIntervalBadge}>
                 <View style={styles.waterIntervalLabelRow}>
                   <ThemedText style={styles.waterIntervalLabel}>Inactive season</ThemedText>
-                  {!isCurrentlyActive && <View style={[styles.seasonIndicator, { backgroundColor: '#9CA3AF' }]} />}
+                  {!isCurrentlyActive && <View style={styles.seasonIndicator} />}
                 </View>
-                <ThemedText style={[styles.waterIntervalValue, { color: '#6B7280' }]}>
+                <ThemedText style={styles.waterIntervalValue}>
                   Every {vm.water_interval_days_inactive} {vm.water_interval_days_inactive === 1 ? 'day' : 'days'}
                 </ThemedText>
               </View>
@@ -227,31 +269,31 @@ export default function CareSection({
       <View style={styles.waterIntervalContainer}>
         {isYearRound ? (
           <View style={styles.waterIntervalRow}>
-            <View style={[styles.waterIntervalBadge, { backgroundColor: 'rgba(16, 185, 129, 0.15)' }]}>
+            <View style={styles.waterIntervalBadge}>
               <ThemedText style={styles.waterIntervalLabel}>Fertilize every</ThemedText>
-              <ThemedText style={[styles.waterIntervalValue, { color: '#10B981' }]}>
+              <ThemedText style={styles.waterIntervalValue}>
                 {vm.fert_interval_days_active} {vm.fert_interval_days_active === 1 ? 'day' : 'days'}
               </ThemedText>
             </View>
           </View>
         ) : (
           <View style={styles.waterIntervalRow}>
-            <View style={[styles.waterIntervalBadge, { backgroundColor: 'rgba(16, 185, 129, 0.15)' }]}>
+            <View style={styles.waterIntervalBadge}>
               <View style={styles.waterIntervalLabelRow}>
                 <ThemedText style={styles.waterIntervalLabel}>Active season</ThemedText>
-                {isCurrentlyActive && <View style={[styles.seasonIndicator, { backgroundColor: '#10B981' }]} />}
+                {isCurrentlyActive && <View style={styles.seasonIndicator} />}
               </View>
-              <ThemedText style={[styles.waterIntervalValue, { color: '#10B981' }]}>
+              <ThemedText style={styles.waterIntervalValue}>
                 Every {vm.fert_interval_days_active} {vm.fert_interval_days_active === 1 ? 'day' : 'days'}
               </ThemedText>
             </View>
             {hasInactiveInterval && (
-              <View style={[styles.waterIntervalBadge, { backgroundColor: 'rgba(156, 163, 175, 0.15)' }]}>
+              <View style={styles.waterIntervalBadge}>
                 <View style={styles.waterIntervalLabelRow}>
                   <ThemedText style={styles.waterIntervalLabel}>Inactive season</ThemedText>
-                  {!isCurrentlyActive && <View style={[styles.seasonIndicator, { backgroundColor: '#9CA3AF' }]} />}
+                  {!isCurrentlyActive && <View style={styles.seasonIndicator} />}
                 </View>
-                <ThemedText style={[styles.waterIntervalValue, { color: '#6B7280' }]}>
+                <ThemedText style={styles.waterIntervalValue}>
                   Every {vm.fert_interval_days_inactive} {vm.fert_interval_days_inactive === 1 ? 'day' : 'days'}
                 </ThemedText>
               </View>
@@ -453,9 +495,9 @@ export default function CareSection({
                 🌸 Seasonal Grower •{' '}
                 {vm.active_season_start_date && vm.active_season_end_date ? (
                   isInActiveSeason(vm.active_season_start_date, vm.active_season_end_date) ? (
-                    <ThemedText style={[styles.growerTypeText, { color: '#10B981' }]}>Active</ThemedText>
+                    <ThemedText style={[styles.growerTypeText, { color: '#9DB668' }]}>Active</ThemedText>
                   ) : (
-                    <ThemedText style={[styles.growerTypeText, { color: '#9CA3AF' }]}>Inactive</ThemedText>
+                    <ThemedText style={[styles.growerTypeText, { opacity: 0.7 }]}>Inactive</ThemedText>
                   )
                 ) : (
                   'Unknown'
@@ -465,22 +507,22 @@ export default function CareSection({
           </ThemedText>
           <ThemedText style={styles.growerDetailText}>
             {vm.schedule_same_year_round ? (
-              `${commonName || displayName} shows growth year round`
+              `${displayName} shows growth year round`
             ) : vm.active_season_start_date && vm.active_season_end_date ? (
               <>
-                {commonName || displayName} mostly grows from{' '}
-                <ThemedText style={[styles.growerDetailText, { color: '#10B981', fontWeight: '700' }]}>
+                {displayName} mostly grows from{' '}
+                <ThemedText style={[styles.growerDetailText, { color: '#9DB668', fontWeight: '700' }]}>
                   {formatSeasonDate(vm.active_season_start_date)}
                 </ThemedText>
-                <ThemedText style={[styles.growerDetailText, { color: '#10B981', fontWeight: '700' }]}>
+                <ThemedText style={[styles.growerDetailText, { color: '#9DB668', fontWeight: '700' }]}>
                   {' '}–{' '}
                 </ThemedText>
-                <ThemedText style={[styles.growerDetailText, { color: '#10B981', fontWeight: '700' }]}>
+                <ThemedText style={[styles.growerDetailText, { color: '#9DB668', fontWeight: '700' }]}>
                   {formatSeasonDate(vm.active_season_end_date)}
                 </ThemedText>
               </>
             ) : (
-              `${commonName || displayName} has a seasonal growth pattern`
+              `${displayName} has a seasonal growth pattern`
             )}
           </ThemedText>
         </View>
@@ -558,18 +600,20 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     paddingHorizontal: 16,
     borderRadius: 12,
-    backgroundColor: 'rgba(16, 185, 129, 0.1)',
+    backgroundColor: '#6B8E23',
   },
   growerTypeText: {
     fontWeight: '700',
     fontSize: 18,
     textAlign: 'center',
+    color: '#FFFFFF',
   },
   growerDetailText: {
     fontSize: 14,
     textAlign: 'center',
     marginTop: 6,
-    opacity: 0.85,
+    opacity: 0.9,
+    color: '#FFFFFF',
   },
   waterIntervalContainer: {
     marginTop: 8,
@@ -587,6 +631,7 @@ const styles = StyleSheet.create({
     flex: 1,
     minWidth: 140,
     alignItems: 'center',
+    backgroundColor: '#6B8E23',
   },
   waterIntervalLabelRow: {
     flexDirection: 'row',
@@ -597,18 +642,33 @@ const styles = StyleSheet.create({
   waterIntervalLabel: {
     fontSize: 12,
     fontWeight: '600',
-    opacity: 0.7,
     textAlign: 'center',
+    color: '#FFFFFF',
   },
   waterIntervalValue: {
     fontSize: 16,
     fontWeight: '700',
     textAlign: 'center',
+    color: '#9DB668',
+    marginTop: 4,
+  },
+  customChip: {
+    marginTop: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 4,
+    backgroundColor: '#9DB668',
+  },
+  customChipText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#FFFFFF',
   },
   seasonIndicator: {
     width: 8,
     height: 8,
     borderRadius: 4,
+    backgroundColor: '#9DB668',
   },
   menuButton: {
     flexDirection: 'row',

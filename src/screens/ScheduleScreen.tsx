@@ -18,6 +18,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useTheme } from '@/context/themeContext';
 import { useAuth } from '@/context/AuthContext';
+import { usePlantImageCache } from '@/context/PlantImageCacheContext';
 import { supabase } from '@/services/supabaseClient';
 import { useRebuildAllWaterSchedules } from '@/hooks/scheduling/useRebuildAllWaterSchedules';
 import { delayScheduleByDays } from '@/services/supabaseSchedules';
@@ -45,6 +46,7 @@ type ScheduleItem = {
   systemType?: 'normal' | 'reservoir' | null;
   waterDelay?: number | null;
   plantsTableId?: string | null;
+  updatedAt?: string | null;
 };
 
 type CombinedSchedule = {
@@ -441,6 +443,7 @@ const CombinedScheduleCard = memo(function CombinedScheduleCard({
 export default function ScheduleScreen() {
   const { theme } = useTheme();
   const { user } = useAuth();
+  const { getCachedImage } = usePlantImageCache();
   const nav = useNavigation();
   const { rebuild, loading: rebuilding, doneCount, total, uniquePlantsCount, completedPlantsCount, currentPhase } =
     useRebuildAllWaterSchedules();
@@ -526,6 +529,7 @@ export default function ScheduleScreen() {
         .select('id', { count: 'exact' })
         .eq('owner_id', user.id)
         .is('deceased_at', null) // Exclude deceased plants
+        .is('sold_at', null) // Exclude sold plants
         .order('created_at', { ascending: true })
         .range(0, 9999);
   
@@ -551,11 +555,15 @@ export default function ScheduleScreen() {
             light_type,
             water_delay,
             deceased_at,
+            sold_at,
+            updated_at,
             plants:plants_table_id ( plant_name ),
             location:location_id ( id, name )
           )
         `, { count: 'exact' })
         .eq('owner_id', user.id)
+        .is('user_plants.deceased_at', null) // Exclude deceased plants
+        .is('user_plants.sold_at', null) // Exclude sold plants
         .order('next_run_at', { ascending: true })
         .range(0, 9999);
   
@@ -577,12 +585,15 @@ export default function ScheduleScreen() {
             light_type,
             water_delay,
             deceased_at,
+            sold_at,
+            updated_at,
             plants:plants_table_id ( plant_name ),
             location:location_id ( id, name )
           )
         `, { count: 'exact' })
         .eq('user_plants.owner_id', user.id) // <— key difference
         .is('user_plants.deceased_at', null) // Exclude deceased plants
+        .is('user_plants.sold_at', null) // Exclude sold plants
         .order('next_run_at', { ascending: true })
         .range(0, 9999);
   
@@ -622,11 +633,13 @@ export default function ScheduleScreen() {
       }
   
       // Choose which dataset drives the UI (for now use the JOIN filter; flip if needed)
-      // Filter out any schedules for deceased plants (post-filter in case Supabase join filter doesn't work)
+      // Filter out any schedules for deceased or sold plants (post-filter in case Supabase join filter doesn't work)
       const rows = (rowsJoin ?? []).filter((row: any) => {
         // If user_plants is an array (Supabase sometimes returns arrays for joins), check first element
         const userPlant = Array.isArray(row.user_plants) ? row.user_plants[0] : row.user_plants;
-        return userPlant?.deceased_at === null || userPlant?.deceased_at === undefined;
+        const isDeceased = userPlant?.deceased_at === null || userPlant?.deceased_at === undefined;
+        const isNotSold = userPlant?.sold_at === null || userPlant?.sold_at === undefined;
+        return isDeceased && isNotSold;
       }) as any as ScheduleQueryRow[];
   
       // ——— Deep debug metrics ———
@@ -693,6 +706,7 @@ export default function ScheduleScreen() {
           systemType: row.user_plants?.system_type || null,
           waterDelay: row.user_plants?.water_delay ?? null,
           plantsTableId: row.user_plants?.plants_table_id ?? null,
+          updatedAt: row.user_plants?.updated_at ?? null,
         }));
   
       // Build photo lookup cache meta and system_type lookup
@@ -725,9 +739,9 @@ export default function ScheduleScreen() {
       const defaultDelaysMap: Record<string, number | null> = {};
       if (plantsNeedingDefaults.size > 0) {
         const { data: plantsData } = await supabase
-          .from('plants')
-          .select('id, water_interval_days_active, water_interval_days_inactive, schedule_same_year_round, active_season_start_date, active_season_end_date')
-          .in('id', Array.from(plantsNeedingDefaults));
+          .from('plants_schedule')
+          .select('plant_id, water_interval_days_active, water_interval_days_inactive, schedule_same_year_round, active_season_start_date, active_season_end_date')
+          .in('plant_id', Array.from(plantsNeedingDefaults));
         
         if (plantsData) {
           const now = new Date();
@@ -748,7 +762,7 @@ export default function ScheduleScreen() {
                 delay = plant.water_interval_days_active;
               }
             }
-            defaultDelaysMap[plant.id] = delay;
+            defaultDelaysMap[plant.plant_id] = delay;
           }
         }
       }
@@ -774,130 +788,73 @@ export default function ScheduleScreen() {
     if (!metaReadyRef.current || schedules.length === 0) return;
 
     const loadAllImages = async () => {
-      const needMetaLookup: string[] = [];
-      const signTargets: PhotoMeta[] = [];
-      const immediateUpdates: Record<string, string> = {};
+      const updates: Record<string, string> = {};
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-      const uuidRegex =
-        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
+      // Process each schedule item
       for (const schedule of schedules) {
         const upid = schedule.userPlantId;
+        // Skip if already cached
         if (imageCache[upid] !== undefined) continue;
 
         const key = photoKeyByUserPlantRef.current[upid];
+        // No photo available
         if (key === null) {
-          immediateUpdates[upid] = '';
+          updates[upid] = '';
           continue;
         }
         if (key === undefined) continue;
 
-        const cached = signedUrlCacheRef.current[key];
-        if (cached !== undefined) {
-          immediateUpdates[upid] = cached;
-          continue;
-        }
-
-        needMetaLookup.push(upid);
-      }
-
-      if (Object.keys(immediateUpdates).length > 0) {
-        setImageCache((prev) => ({ ...prev, ...immediateUpdates }));
-      }
-
-      if (needMetaLookup.length === 0) return;
-
-      const uuidIds: string[] = [];
-      const legacyPaths: PhotoMeta[] = [];
-
-      for (const upid of needMetaLookup) {
-        const key = photoKeyByUserPlantRef.current[upid]!;
-        if (uuidRegex.test(key)) uuidIds.push(key);
-        else legacyPaths.push({ key, bucket: 'plant-photos', path: key, userPlantId: upid });
-      }
-
-      if (uuidIds.length > 0) {
-        const { data: photoRows, error } = await supabase
-          .from('user_plant_photos')
-          .select('id, bucket, object_path')
-          .in('id', uuidIds);
-
-        if (!error && photoRows) {
-          const byId: Record<string, { bucket: string; object_path: string }> = {};
-          for (const r of photoRows) {
-            byId[r.id] = { bucket: r.bucket || 'plant-photos', object_path: r.object_path };
-          }
-          for (const upid of needMetaLookup) {
-            const key = photoKeyByUserPlantRef.current[upid]!;
-            const meta = byId[key];
-            if (meta?.object_path) {
-              signTargets.push({ key, bucket: meta.bucket, path: meta.object_path, userPlantId: upid });
-            } else {
-              signedUrlCacheRef.current[key] = '';
-              immediateUpdates[upid] = '';
+        // Generate image URI function for the cache
+        const generateImageUri = async (): Promise<string> => {
+          if (uuidRegex.test(key)) {
+            // UUID - fetch from user_plant_photos
+            const { data: photoRow } = await supabase
+              .from('user_plant_photos')
+              .select('bucket, object_path')
+              .eq('id', key)
+              .single();
+            
+            if (photoRow?.object_path) {
+              const { data: signed } = await supabase.storage
+                .from(photoRow.bucket || 'plant-photos')
+                .createSignedUrl(photoRow.object_path, 60 * 60);
+              return signed?.signedUrl || '';
             }
+          } else {
+            // Legacy path
+            const { data: signed } = await supabase.storage
+              .from('plant-photos')
+              .createSignedUrl(key, 60 * 60);
+            return signed?.signedUrl || '';
           }
+          return '';
+        };
+
+        // Get current photo ID for versioned caching
+        const currentPhotoId = key || null;
+        
+        // Use the cache to get the image
+        try {
+          const cachedUri = await getCachedImage(
+            upid,
+            schedule.updatedAt || null,
+            currentPhotoId,
+            generateImageUri
+          );
+          updates[upid] = cachedUri || '';
+        } catch (error) {
+          console.error(`[ScheduleScreen] Error loading image for plant ${upid}:`, error);
+          updates[upid] = '';
         }
       }
 
-      signTargets.push(...legacyPaths);
-
-      if (Object.keys(immediateUpdates).length > 0) {
-        setImageCache((prev) => ({ ...prev, ...immediateUpdates }));
-      }
-
-      if (signTargets.length === 0) return;
-
-      const batchedUpdates: Record<string, string> = {};
-      try {
-        const byBucket = new Map<string, PhotoMeta[]>();
-        signTargets.forEach((pm) => {
-          const group = byBucket.get(pm.bucket) ?? [];
-          group.push(pm);
-          byBucket.set(pm.bucket, group);
-        });
-
-        for (const [bucket, items] of byBucket) {
-          const storageAny = supabase.storage.from(bucket) as any;
-          if (typeof storageAny.createSignedUrls === 'function') {
-            const { data: signedList, error: batchErr } = await storageAny.createSignedUrls(
-              items.map((i: PhotoMeta) => i.path),
-              3600
-            );
-
-            if (!batchErr && Array.isArray(signedList) && signedList.length === items.length) {
-              signedList.forEach((entry: any, idx: number) => {
-                const pm = items[idx];
-                const url: string | undefined = entry?.signedUrl || undefined;
-                if (url) {
-                  signedUrlCacheRef.current[pm.key] = url;
-                  batchedUpdates[pm.userPlantId] = url;
-                }
-              });
-              continue;
-            }
-          }
-
-          for (const pm of items) {
-            try {
-              const { data: signed, error: perErr } = await supabase.storage
-                .from(bucket)
-                .createSignedUrl(pm.path, 3600);
-              const url = signed?.signedUrl;
-              if (!perErr && url) {
-                signedUrlCacheRef.current[pm.key] = url;
-                batchedUpdates[pm.userPlantId] = url;
-              }
-            } catch {}
-          }
-        }
-      } catch {}
-
-      if (Object.keys(batchedUpdates).length > 0) {
+      // Update image cache state
+      if (Object.keys(updates).length > 0) {
         setImageCache((prev) => {
           const next = { ...prev };
           let changed = false;
-          for (const [k, v] of Object.entries(batchedUpdates)) {
+          for (const [k, v] of Object.entries(updates)) {
             if (next[k] !== v) {
               next[k] = v;
               changed = true;
@@ -909,7 +866,7 @@ export default function ScheduleScreen() {
     };
 
     loadAllImages();
-  }, [metaReadyRef.current, schedules, imageCache]);
+  }, [metaReadyRef.current, schedules, imageCache, getCachedImage]);
 
   // TESTING FLAG: Set to true to force rebuild on every screen focus (matches FORCE_REBUILD_ALL in useRebuildAllWaterSchedules)
   const FORCE_REBUILD_ON_FOCUS = false;
@@ -989,9 +946,10 @@ export default function ScheduleScreen() {
       (async () => {
         try {
           const { fetchUserPlantIdsNeedingRebuild } = await import('@/services/supabaseSchedules');
+          if (!user?.id) return;
           const [waterNeedRebuild, fertNeedRebuild] = await Promise.all([
-            fetchUserPlantIdsNeedingRebuild('water'),
-            fetchUserPlantIdsNeedingRebuild('fertilize'),
+            fetchUserPlantIdsNeedingRebuild('water', user.id),
+            fetchUserPlantIdsNeedingRebuild('fertilize', user.id),
           ]);
 
           if (waterNeedRebuild.length > 0 || fertNeedRebuild.length > 0) {
@@ -1042,14 +1000,15 @@ export default function ScheduleScreen() {
       // Check if rebuild is needed (only check for timeline changes, not overdue items)
       // Overdue items are handled by the normal rebuild process, not on every refresh
       const { fetchUserPlantIdsNeedingRebuild, fetchUserPlantIdsNeedingPestScheduleUpdate } = await import('@/services/supabaseSchedules');
+      if (!user?.id) return;
       const [
         waterNeedRebuild,
         fertNeedRebuild,
         pestNeedUpdate,
       ] = await Promise.all([
-        fetchUserPlantIdsNeedingRebuild('water'),
-        fetchUserPlantIdsNeedingRebuild('fertilize'),
-        fetchUserPlantIdsNeedingPestScheduleUpdate(),
+        fetchUserPlantIdsNeedingRebuild('water', user.id),
+        fetchUserPlantIdsNeedingRebuild('fertilize', user.id),
+        fetchUserPlantIdsNeedingPestScheduleUpdate(user.id),
       ]);
 
       const needsRebuild = 
@@ -1475,9 +1434,48 @@ export default function ScheduleScreen() {
 
   const compareCombinedSchedules = useCallback(
     (a: CombinedSchedule, b: CombinedSchedule) => {
-      const dateDiff = a.earliestNextRunAt - b.earliestNextRunAt;
-      if (dateDiff !== 0) return dateDiff;
+      // Check what's due TODAY (not just what schedules exist)
+      const getActionPriorityDueToday = (combined: CombinedSchedule): number | null => {
+        const fertSchedule = combined.schedules['fertilize'];
+        const waterSchedule = combined.schedules['water'];
+        const treatSchedule = combined.schedules['pest_treat'];
+        
+        const fertDueToday = fertSchedule ? isDueToday(fertSchedule.nextRunAt) : false;
+        const waterDueToday = waterSchedule ? isDueToday(waterSchedule.nextRunAt) : false;
+        const treatDueToday = treatSchedule ? isDueToday(treatSchedule.nextRunAt) : false;
+        
+        // Only consider schedules that are due today for prioritization
+        if (fertDueToday) return 1; // Fertilize due today (or fertilize + water) - Group 1
+        if (waterDueToday && !fertDueToday) return 2; // Water only due today (no fertilize) - Group 2
+        if (treatDueToday && !fertDueToday && !waterDueToday) return 3; // Treat only due today - Group 3
+        
+        // If nothing is due today, return null (will sort by date instead)
+        return null;
+      };
 
+      const priorityA = getActionPriorityDueToday(a);
+      const priorityB = getActionPriorityDueToday(b);
+      
+      // If both have priorities (both due today), sort by priority
+      if (priorityA !== null && priorityB !== null) {
+        if (priorityA !== priorityB) {
+          return priorityA - priorityB;
+        }
+      }
+      // If only one has priority (one due today, one not), prioritize the one due today
+      else if (priorityA !== null && priorityB === null) {
+        return -1;
+      }
+      else if (priorityA === null && priorityB !== null) {
+        return 1;
+      }
+      // If neither has priority (both not due today), sort by earliest date
+      else {
+        const dateDiff = a.earliestNextRunAt - b.earliestNextRunAt;
+        if (dateDiff !== 0) return dateDiff;
+      }
+
+      // Within the same priority group (or same date), sort alphabetically by nickname
       const nameA = (a.plantNickname || a.plantName || '').toLowerCase();
       const nameB = (b.plantNickname || b.plantName || '').toLowerCase();
       if (nameA && nameB) {
@@ -1485,9 +1483,19 @@ export default function ScheduleScreen() {
         if (nameDiff !== 0) return nameDiff;
       }
 
+      // If nicknames are equal, sort by lineage alphanumerically
+      const lineageA = a.lineage || '';
+      const lineageB = b.lineage || '';
+      if (lineageA && lineageB) {
+        return lineageA.localeCompare(lineageB, undefined, { numeric: true, sensitivity: 'base' });
+      }
+      // If one has lineage and the other doesn't, put the one with lineage first
+      if (lineageA && !lineageB) return -1;
+      if (!lineageA && lineageB) return 1;
+
       return 0;
     },
-    []
+    [isDueToday]
   );
 
   /* Strict discriminated union */
@@ -1812,6 +1820,52 @@ export default function ScheduleScreen() {
             schedule: waterSchedule, // Use water schedule as primary
           });
         }
+
+        // Sort event summaries: items due today first (prioritized by action type), then tomorrow, then future
+        eventSummaries.sort((a, b) => {
+          // First, prioritize items due today
+          if (a.isToday && !b.isToday) return -1;
+          if (!a.isToday && b.isToday) return 1;
+          
+          // If both are due today, prioritize by action type: fertilize > water > treat
+          if (a.isToday && b.isToday) {
+            const getActionPriority = (eventType: string): number => {
+              if (eventType === 'water_fertilize' || eventType === 'fertilize') return 1;
+              if (eventType === 'water') return 2;
+              if (eventType === 'pest_treat') return 3;
+              return 4;
+            };
+            const priorityA = getActionPriority(a.eventType);
+            const priorityB = getActionPriority(b.eventType);
+            if (priorityA !== priorityB) return priorityA - priorityB;
+          }
+          
+          // Then prioritize items due tomorrow
+          if (a.isTomorrow && !b.isTomorrow) return -1;
+          if (!a.isTomorrow && b.isTomorrow) return 1;
+          
+          // If both are tomorrow, prioritize by action type
+          if (a.isTomorrow && b.isTomorrow) {
+            const getActionPriority = (eventType: string): number => {
+              if (eventType === 'water_fertilize' || eventType === 'fertilize') return 1;
+              if (eventType === 'water') return 2;
+              if (eventType === 'pest_treat') return 3;
+              return 4;
+            };
+            const priorityA = getActionPriority(a.eventType);
+            const priorityB = getActionPriority(b.eventType);
+            if (priorityA !== priorityB) return priorityA - priorityB;
+          }
+          
+          // For future items or same priority, sort by date
+          if (a.schedule && b.schedule) {
+            const dateA = new Date(a.schedule.nextRunAt).getTime();
+            const dateB = new Date(b.schedule.nextRunAt).getTime();
+            return dateA - dateB;
+          }
+          
+          return 0;
+        });
 
         // Check if this plant has any items due today
         const hasItemsDueToday = eventSummaries.some(summary => summary.isToday);

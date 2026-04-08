@@ -1,6 +1,6 @@
 // components/Section.tsx
 import React from 'react';
-import { View, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, Pressable, StyleSheet } from 'react-native';
 import { ThemedText } from '@/components/themed-text';
 import { useTheme } from '@/context/themeContext';
 
@@ -14,9 +14,11 @@ type Props = {
   defaultOpen?: boolean;
   /** Optional: custom content to render on the right side of the header */
   headerRight?: React.ReactNode;
+  /** Optional: custom background color for the header */
+  headerBackgroundColor?: string;
 };
 
-export default function Section({ title, children, open, onToggle, defaultOpen = false, headerRight }: Props) {
+export default function Section({ title, children, open, onToggle, defaultOpen = false, headerRight, headerBackgroundColor }: Props) {
   const { theme } = useTheme();
 
   // Uncontrolled fallback if `open` isn't provided
@@ -32,10 +34,23 @@ export default function Section({ title, children, open, onToggle, defaultOpen =
     }
   };
 
+  // Calculate pressed state color (slightly darker olive green)
+  const getHeaderBackgroundColor = (pressed: boolean) => {
+    if (!headerBackgroundColor) return undefined;
+    // If it's the olive green (#7FA947), use darker olive green (#6B8E23) when pressed
+    if (headerBackgroundColor === '#7FA947' && pressed) {
+      return '#6B8E23';
+    }
+    return headerBackgroundColor;
+  };
+
   return (
-    <View style={[styles.sectionContainer, { borderColor: theme.colors.border, backgroundColor: theme.colors.card }]}>
-      <TouchableOpacity
-        style={styles.sectionHeader}
+    <View style={[styles.sectionContainer, { borderColor: headerBackgroundColor ? 'transparent' : theme.colors.border, backgroundColor: theme.colors.card }]}>
+      <Pressable
+        style={({ pressed }) => [
+          styles.sectionHeader,
+          headerBackgroundColor && { backgroundColor: getHeaderBackgroundColor(pressed) },
+        ]}
         onPress={handleToggle}
         accessibilityRole="button"
         accessibilityLabel={`Toggle section ${title}`}
@@ -45,7 +60,7 @@ export default function Section({ title, children, open, onToggle, defaultOpen =
           {headerRight}
           <ThemedText style={[styles.sectionIndicator, { color: theme.colors.text }]}>{isOpen ? '−' : '+'}</ThemedText>
         </View>
-      </TouchableOpacity>
+      </Pressable>
 
       {isOpen && (
         <View style={[styles.sectionBody, { backgroundColor: theme.colors.background }]}>

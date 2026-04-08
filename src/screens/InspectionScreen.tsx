@@ -221,7 +221,7 @@ export default function InspectionScreen() {
       let plantsById: Record<string, any> = {};
       if (inspectionPlantIds.length > 0) {
         const { data: plantRows, error: pErr } = await supabase
-          .from('plants')
+          .from('plants_core')
           .select('id, plant_name, plant_scientific_name')
           .in('id', inspectionPlantIds);
         if (pErr) throw pErr;

@@ -120,9 +120,9 @@ export function SpeciesAutocomplete(props: Props) {
     async function fetchDetails(sel: SpeciesResult) {
       try {
         setLoadingDetails(true);
-        // plants: image
+        // plants_core: image
         const { data: plant, error: pErr } = await supabase
-          .from('plants')
+          .from('plants_core')
           .select('plant_main_image')
           .eq('id', sel.id)
           .single();

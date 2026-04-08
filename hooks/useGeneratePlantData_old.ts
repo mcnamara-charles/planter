@@ -451,17 +451,11 @@ async function savePlantsRow<T extends Record<string, any>>(id: string, payload:
   }
   if (Object.keys(clean).length === 0) return null;
 
-  const { data, error, status } = await supabase
-    .from('plants')
-    .update(clean)
-    .eq('id', id)
-    .select(
-      'id, plant_name, description, availability, rarity, care_light, care_water, care_temp_humidity, care_fertilizer, care_pruning, soil_description, propagation_methods_json, data_response_version, data_response_meta'
-    )
-    .single();
+  // Use savePlantsRow from services to handle routing to correct microtables
+  const { savePlantsRow: savePlantsRowService } = require('@/services/supabasePlants');
+  const data = await savePlantsRowService(id, clean);
 
-  if (error) throw error;
-  if (!data) throw new Error(`Update returned no row (status ${status}). Check RLS or id mismatch.`);
+  if (!data) throw new Error(`Update returned no row. Check RLS or id mismatch.`);
   return data;
 }
 
@@ -514,18 +508,9 @@ export function useGeneratePlantData() {
 
       // Stage 1: Read existing
       const db = await stage('db_read', 'Reading existing plant data', async () => {
-        const pre = (await supabase
-          .from('plants')
-          .select(`
-            id, plant_name, description, availability, rarity,
-            care_light, care_water, care_temp_humidity, care_fertilizer, care_pruning,
-            soil_description, propagation_methods_json,
-            data_response_version
-          `)
-          .eq('id', args.plantsTableId)
-          .maybeSingle()) as SBResp<RowShape>;
-        if (pre.error) throw pre.error;
-        return pre.data;
+        const { readPlantRow } = require('@/services/supabasePlants');
+        const pre = await readPlantRow(args.plantsTableId);
+        return pre;
       }, onProgress);
 
       const rowVersion = db?.data_response_version ?? 0;

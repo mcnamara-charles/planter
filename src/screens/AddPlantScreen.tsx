@@ -72,6 +72,7 @@ export default function AddPlantScreen() {
   const [saving, setSaving] = useState(false);
   const [speciesResetKey, setSpeciesResetKey] = useState(0);
   const initialPayloadRef = useRef<any | null>(null);
+  const originalPhotoIdRef = useRef<string | null>(null);
   const [hasChanges, setHasChanges] = useState(false);
   const [androidOffset, setAndroidOffset] = useState(0);
   const [identificationDataProcessed, setIdentificationDataProcessed] = useState(false);
@@ -143,6 +144,51 @@ export default function AddPlantScreen() {
     }
   }, [identificationData, isEdit, identificationDataProcessed]);
 
+  // Handle divide from plant (division propagation)
+  useEffect(() => {
+    if (!isEdit && params?.divideFromPlantId && !identificationDataProcessed) {
+      // Set species from params
+      if (params.speciesId) {
+        setSpeciesId(String(params.speciesId));
+      }
+      if (params.speciesCommon) {
+        setSpeciesCommon(params.speciesCommon);
+      }
+      if (params.speciesScientific) {
+        setSpeciesScientific(params.speciesScientific);
+      }
+      
+      // Set propagated from
+      if (params.propagatedFromId) {
+        setPropagatedFromId(String(params.propagatedFromId));
+        // Fetch the propagated from plant's nickname for display
+        (async () => {
+          try {
+            const { data: propPlant } = await supabase
+              .from('user_plants')
+              .select('nickname, custom_species_name, plants_table_id, plants:plants_table_id (plant_name)')
+              .eq('id', params.propagatedFromId)
+              .maybeSingle();
+            if (propPlant) {
+              const nickname = propPlant.nickname || propPlant.custom_species_name || (propPlant.plants as any)?.plant_name || '';
+              setPropagatedFrom(nickname);
+            }
+          } catch (e) {
+            console.error('Error fetching propagated from plant:', e);
+          }
+        })();
+      }
+      
+      // Set lineage
+      if (params.lineage) {
+        setLineage(params.lineage);
+      }
+      
+      // Mark as processed
+      setIdentificationDataProcessed(true);
+    }
+  }, [params?.divideFromPlantId, params?.speciesId, params?.speciesCommon, params?.speciesScientific, params?.propagatedFromId, params?.lineage, isEdit, identificationDataProcessed]);
+
   // Prefill when editing
   useEffect(() => {
     (async () => {
@@ -198,6 +244,7 @@ export default function AddPlantScreen() {
             setPotDiameterIn(up.pot_diameter_in ? String(up.pot_diameter_in) : '');
             setDrainageSystem(up.drainage_system ?? '');
             // Prefill photo if present
+            originalPhotoIdRef.current = up.default_plant_photo_id || null;
             if (up.default_plant_photo_id) {
               try {
                 const val = String(up.default_plant_photo_id);
@@ -247,7 +294,7 @@ export default function AddPlantScreen() {
 
             if (up.plants_table_id) {
               const { data: plantRow } = await supabase
-                .from('plants')
+                .from('plants_core')
                 .select('id, plant_name, plant_scientific_name')
                 .eq('id', up.plants_table_id)
                 .maybeSingle();
@@ -472,8 +519,26 @@ export default function AddPlantScreen() {
         await createAddedOnce(currentPlantId, inserted?.created_at ?? undefined);
       }
 
-      // Optional photo handling
-      if (photo?.uri && currentPlantId) {
+      // Optional photo handling - only upload if photo is new (local file URI) or plant is new
+      // Check if photo URI is a local file (indicating it was just picked)
+      const isLocalFile = photo?.uri && (
+        photo.uri.startsWith('file://') ||
+        photo.uri.startsWith('ph://') ||
+        photo.uri.startsWith('content://') ||
+        photo.uri.startsWith('assets-library://') ||
+        photo.uri.startsWith('phasset://')
+      );
+      
+      // Only upload/insert if:
+      // 1. It's a new plant (no original photo ID), OR
+      // 2. It's a local file (new photo was picked)
+      const shouldUploadPhoto = photo?.uri && currentPlantId && (
+        !isEdit || // New plant - always upload if photo exists
+        isLocalFile || // Local file - new photo was picked
+        (isEdit && !originalPhotoIdRef.current) // Edit mode but no original photo - new photo
+      );
+      
+      if (shouldUploadPhoto) {
         const now = new Date();
         const yyyy = String(now.getFullYear());
         const mm = String(now.getMonth() + 1).padStart(2, '0');
@@ -514,6 +579,13 @@ export default function AddPlantScreen() {
           .update({ default_plant_photo_id: photoRow.id })
           .eq('id', currentPlantId);
         if (setDefaultErr) throw setDefaultErr;
+      } else if (isEdit && !photo?.uri && originalPhotoIdRef.current) {
+        // User removed the photo - clear default_plant_photo_id
+        const { error: clearPhotoErr } = await supabase
+          .from('user_plants')
+          .update({ default_plant_photo_id: null })
+          .eq('id', currentPlantId);
+        if (clearPhotoErr) throw clearPhotoErr;
       }
 
       if (isEdit) {

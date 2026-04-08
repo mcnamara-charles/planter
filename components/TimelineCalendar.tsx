@@ -73,6 +73,12 @@ function humanizeType(t: string) {
   return t.replace(/[_-]+/g, ' ').replace(/\b\w/g, (m) => m.toUpperCase());
 }
 
+function formatWeightChip(label: string, value: unknown): string | null {
+  const n = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return `${label}: ${n} lb`;
+}
+
 type EventConfig = {
   icon: string;
   title?: (e: TimelineEvent) => string;
@@ -93,6 +99,10 @@ const EVENT_MAP: Record<string, EventConfig> = {
       if (d.moisture_after) chips.push(`After: ${d.moisture_after}`);
       if (d.method) chips.push(String(d.method));
       if (d.water_type) chips.push(String(d.water_type));
+      const dryWeightChip = formatWeightChip('Dry', d.dry_weight_lb);
+      const wetWeightChip = formatWeightChip('Wet', d.wet_weight_lb);
+      if (dryWeightChip) chips.push(dryWeightChip);
+      if (wetWeightChip) chips.push(wetWeightChip);
       return chips;
     },
   },
@@ -102,10 +112,16 @@ const EVENT_MAP: Record<string, EventConfig> = {
     chips: (e) => {
       const d = e.event_data || {};
       const chips: string[] = [];
-      if (d.product) chips.push(String(d.product));
-      if (d.npk) chips.push(`NPK ${d.npk}`);
-      if (d.dose_ml) chips.push(`${d.dose_ml} mL`);
-      if (d.schedule) chips.push(String(d.schedule));
+      if (d.product?.name) chips.push(String(d.product.name));
+      if (d.product?.npk) chips.push(`NPK ${d.product.npk}`);
+      if (d.product?.form) chips.push(String(d.product.form));
+      if (d.method) chips.push(String(d.method));
+      if (d.concentration) chips.push(`Concentration: ${String(d.concentration)}`);
+      if (d.is_watering) chips.push('Counts as watering');
+      const dryWeightChip = formatWeightChip('Dry', d.dry_weight_lb);
+      const wetWeightChip = formatWeightChip('Wet', d.wet_weight_lb);
+      if (dryWeightChip) chips.push(dryWeightChip);
+      if (wetWeightChip) chips.push(wetWeightChip);
       return chips;
     },
   },

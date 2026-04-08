@@ -1,6 +1,7 @@
 // hooks/usePlantDataValidation.ts
 import { useCallback, useState } from 'react';
 import { supabase } from '@/services/supabaseClient';
+import { readPlantRow } from '@/services/supabasePlants';
 import { computeForcedFieldsSince, CURRENT_RULESET_VERSION } from '@/utils/lib/plantRuleset';
 
 type ValidationResult = {
@@ -13,7 +14,7 @@ type ValidationResult = {
   showModal: boolean;
 };
 
-const REQUIRED_FACTS_FIELDS = ['description', 'availability', 'rarity', 'plant_name'] as const;
+const REQUIRED_FACTS_FIELDS = ['description', 'availability', 'rarity'] as const;
 
 const REQUIRED_CARE_FIELDS = [
   'care_light', 
@@ -105,14 +106,7 @@ export function usePlantDataValidation() {
 
   const validatePlantData = useCallback(async (plantsTableId: string): Promise<ValidationResult> => {
     try {
-      const { data, error } = await supabase
-        .from('plants')
-        .select(REQUIRED_SELECT)
-        .eq('id', plantsTableId)
-        .maybeSingle();
-      if (error) throw error;
-
-      const plant = data as PlantData | null;
+      const plant = await readPlantRow(plantsTableId) as PlantData | null;
       if (!plant) {
         const r: ValidationResult = {
           needsGeneration: true,
@@ -133,7 +127,6 @@ export function usePlantDataValidation() {
       if (!plant.description?.trim()) missingFacts.push('description');
       if (!plant.availability?.trim()) missingFacts.push('availability');
       if (!plant.rarity?.trim()) missingFacts.push('rarity');
-      if (!plant.plant_name?.trim()) missingFacts.push('plant_name');
 
       if (!plant.care_light?.trim()) missingCare.push('care_light');
       if (!plant.care_water?.trim()) missingCare.push('care_water');
